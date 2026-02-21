@@ -109,5 +109,4 @@ export interface AnalysisConfig {
     '하': number;
   };
   selectedSubUnits: string[]; // Stores full paths, e.g., "과목1|대단원A|소단원X"
-  generateAiReport: boolean;
 }

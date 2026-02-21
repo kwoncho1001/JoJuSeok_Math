@@ -13,7 +13,6 @@ import { processStudentData } from './services/analysisService';
 import { readFile, fetchSheetData } from './services/fileService';
 import type { QuestionDBItem, TransactionLogItem, ProgressMasterItem, ScoredStudent, StudentResponseRaw, TextbookResponseRaw, AnalysisConfig, ClassificationCsvItem, ClassificationTree } from './types';
 import { QUESTION_DB_URL, STUDENT_RESPONSE_URL, CLASSIFICATION_CSV_URL } from './constants';
-import { generateAiSummaryContent } from './components/Report'; // Import the new AI summary generation utility
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -34,7 +33,6 @@ const DEFAULT_CONFIG: AnalysisConfig = {
   weights: { '상': 1.2, '중': 1.0, '하': 0.8 },
   difficultyRatio: { '상': 1, '중': 1, '하': 1 },
   selectedSubUnits: [],
-  generateAiReport: false,
 };
 
 export const App: React.FC = () => {
@@ -108,9 +106,10 @@ export const App: React.FC = () => {
         });
         
         newClassificationTree.forEach(largeMap => {
-            largeMap.forEach((smallList, largeKey, map) => {
-                map.set(largeKey, smallList.sort());
-            });
+            // Do not sort smallList to preserve CSV order
+            // largeMap.forEach((smallList, largeKey, map) => {
+            //     map.set(largeKey, smallList.sort());
+            // });
         });
 
         setClassificationTree(newClassificationTree);
@@ -240,8 +239,8 @@ export const App: React.FC = () => {
 
   // Improved handleProcess with explicit unknown type handling for catch blocks
   const handleProcess = useCallback(async (isUpdate = false) => {
-    if (!questionDb.data || (!studentResponse.data && !textbookResponse.data)) {
-      setError('정답지 데이터와 함께 학생 응답 또는 주교재 응답 파일 중 하나 이상을 업로드해주세요.');
+    if (!questionDb.data || !studentResponse.data) {
+      setError('정답지 데이터와 학생 응답 파일을 모두 업로드해주세요.');
       return;
     }
     
@@ -291,7 +290,7 @@ export const App: React.FC = () => {
     }
   }, [analysisConfig, isProcessed]);
 
-  const canProcess = useMemo(() => questionDb.data && (studentResponse.data || textbookResponse.data) && !isLoading, [questionDb.data, studentResponse.data, textbookResponse.data, isLoading]);
+  const canProcess = useMemo(() => questionDb.data && studentResponse.data && !isLoading, [questionDb.data, studentResponse.data, isLoading]);
 
   const detailTypeToSubjectMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -348,18 +347,6 @@ export const App: React.FC = () => {
     const allTransactionLog = newTransactionLog.filter(l => l.StudentID === studentIdToGenerate);
     const studentExamReports = examScoreReport.filter(r => r['학생 이름'] === studentIdToGenerate);
 
-    // AI Summary generation for PDF (if enabled)
-    let aiSummaryText = '';
-    if (analysisConfig.generateAiReport) {
-        const memoizedDataForAi = {
-            examScoreReport: studentExamReports,
-            progressMaster: allProgressMaster,
-            transactionLog: allTransactionLog,
-            questionDb: questionDb.data || [],
-        };
-        aiSummaryText = await generateAiSummaryContent(studentIdToGenerate, memoizedDataForAi, analysisConfig);
-    }
-    
     // 2. Render the Report component into the hidden temporary div
     root.render(
       <Report
@@ -371,10 +358,9 @@ export const App: React.FC = () => {
         examScoreReport={studentExamReports}
         allSubUnitsCount={allSubUnitsCount}
         selectedSubUnitsCount={selectedSubUnitsCount}
-        generateAiReport={analysisConfig.generateAiReport}
         isBulkDownloadMode={true} // Crucial for Report's internal logic and AI summary handling
-        aiSummaryText={aiSummaryText} // Pass pre-generated AI summary
         analysisConfig={analysisConfig} // Pass analysisConfig for Report component
+        classificationData={classificationCsv.data || undefined}
       />
     );
 
@@ -495,7 +481,7 @@ export const App: React.FC = () => {
         reportElement.style.cssText = originalCssText; // Restore original inline styles
         style.remove(); // Remove injected style
     }
-  }, [newProgressMaster, newTransactionLog, examScoreReport, questionDb.data, allSubUnitsCount, selectedSubUnitsCount, analysisConfig, generateAiSummaryContent]);
+  }, [newProgressMaster, newTransactionLog, examScoreReport, questionDb.data, allSubUnitsCount, selectedSubUnitsCount, analysisConfig]);
 
 
   const handleBulkDownloadReports = useCallback(async () => {
@@ -613,11 +599,10 @@ export const App: React.FC = () => {
                 <Database className="w-6 h-6 text-indigo-500"/>
                 데이터 업로드 (Data Input)
                 </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
                 <FileUpload title="테스트/주교재 정답지" description="" icon={<FileCode2 className="w-8 h-8" />} onFileSelect={(file) => handleFileSelect(file, setQuestionDb)} file={questionDb.file} isUploaded={!!questionDb.data} />
                 <FileUpload title="실전 테스트 응답" description="" icon={<Users className="w-8 h-8" />} onFileSelect={(file) => handleFileSelect(file, setStudentResponse)} file={studentResponse.file} isUploaded={!!studentResponse.data} />
-                <FileUpload title="주교재 응답" description="" icon={<BookCheck className="w-8 h-8" />} onFileSelect={(file) => handleFileSelect(file, setTextbookResponse)} file={textbookResponse.file} isUploaded={!!textbookResponse.data} />
-                <FileUpload title="성취도 기록" description="" icon={<TrendingUp className="w-8 h-8" />} onFileSelect={(file) => handleFileSelect(file, setProgressMaster)} file={progressMaster.file} isUploaded={!!progressMaster.data} />
+                <FileUpload title="목차 분류표 CSV" description="" icon={<FileSpreadsheet className="w-8 h-8" />} onFileSelect={(file) => handleFileSelect(file, setClassificationCsv)} file={classificationCsv.file} isUploaded={!!classificationCsv.data} />
                 </div>
             </section>
             
@@ -768,8 +753,8 @@ export const App: React.FC = () => {
                                     examScoreReport={examScoreReport}
                                     allSubUnitsCount={allSubUnitsCount}
                                     selectedSubUnitsCount={selectedSubUnitsCount}
-                                    generateAiReport={analysisConfig.generateAiReport}
                                     analysisConfig={analysisConfig} // Pass analysisConfig here
+                                    classificationData={classificationCsv.data || undefined}
                                 />
                             ) : (
                                 <div className="bg-white p-8 rounded-2xl shadow-lg border border-gray-200/50 text-center text-gray-500 min-h-[400px] flex items-center justify-center">

@@ -1,89 +1,73 @@
 
 
-import React, { useRef, useEffect, useCallback } from 'react';
-import katex from 'katex'; // KaTeX is loaded via importmap
+import React, { useRef, useEffect } from 'react';
+import katex from 'katex';
 
 interface LatexRendererProps {
   text: string;
 }
 
-// Heuristic pre-processor for LaTeX strings
+/**
+ * 수식 중복 제거 및 전처리 함수
+ */
 const preprocessLatexString = (rawText: string): string => {
-  // This regex attempts to find a pattern like:
-  // 1. A closing '$' (not escaped)
-  // 2. Immediately followed by text that is NOT a space and NOT a '$'
-  // 3. And that "trailing text" contains an '=' (common in equations)
-  // Example: "$a^x=b$ax=b" should become "$a^x=bax=b$"
-  // Example: "$A=B$C=D" should become "$A=BC=D$"
-  // This helps when the user might have intended a continuous math block but accidentally closed and reopened or missed a delimiter.
-  const pattern = /(?<!\\)\$(.*?)(?<!\\)\$(?!\s|\$)([a-zA-Z0-9\s=+\-*/^_]+)/g;
+  if (!rawText) return '';
 
-  return rawText.replace(pattern, (match, mathContent, trailingMathLikeText) => {
-    // Only merge if the trailing text actually looks like a continuation of a math expression
-    if (trailingMathLikeText.includes('=')) {
-      // Merge into one math block. Adding a space for readability within the math block.
-      // KaTeX typically handles extra spaces well.
-      return `$${mathContent}${trailingMathLikeText}$`;
-    }
-    return match; // If it doesn't look like math, leave it as is
+  // 1. $...$ 또는 $$...$$ 패턴과 그 뒤에 오는 텍스트를 찾음
+  // ([ \t]*$1)? 부분은 수식 내부의 내용($1)이 수식 바로 뒤에 한 번 더 나오는지 확인
+  const dedupePattern = /(?<!\\)(\${1,2})(.*?)(?<!\\)\1([ \t]*\2)?/g;
+
+  return rawText.replace(dedupePattern, (match, delimiter, mathContent, repetition) => {
+    // 수식 뒤에 내용이 반복된다면 반복되는 부분(repetition)을 제외하고 수식만 반환
+    return `${delimiter}${mathContent}${delimiter}`;
   });
 };
-
 
 export const LatexRenderer: React.FC<LatexRendererProps> = ({ text }) => {
   const ref = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     if (ref.current) {
-      // Clear previous content
       ref.current.innerHTML = ''; 
-
-      // Pre-process the text to coalesce math expressions
       const processedText = preprocessLatexString(text);
 
-      // Regex to find inline math expressions: $...$
-      // This regex looks for a non-escaped dollar sign, then any characters, then another non-escaped dollar sign.
-      // It handles cases where a dollar sign might be escaped (e.g., \$)
-      const inlineMathRegex = /(?<!\\)\$(.*?)(?<!\\)\$/g; 
+      // $$...$$ (디스플레이) 또는 $...$ (인라인) 매칭 regex
+      const mathRegex = /(?<!\\)(\$\$(.*?)(?<!\\)\$\$)|(?<!\\)(\$(.*?)(?<!\\)\$)/g;
       let lastIndex = 0;
       let match;
 
-      while ((match = inlineMathRegex.exec(processedText)) !== null) {
-        // Add preceding plain text
+      while ((match = mathRegex.exec(processedText)) !== null) {
+        // 수식 이전의 일반 텍스트 추가
         if (match.index > lastIndex) {
           const plainText = processedText.substring(lastIndex, match.index);
-          const textNode = document.createTextNode(plainText);
-          ref.current.appendChild(textNode);
+          ref.current.appendChild(document.createTextNode(plainText));
         }
 
-        // Render the math expression
-        const mathExpression = match[1]; // Content inside the dollar signs
+        // 전체 매칭 결과 중 수식 내용(group 2 또는 group 4) 추출
+        const isDisplay = !!match[1];
+        const mathExpression = isDisplay ? match[2] : match[4];
+
         try {
           const mathHtml = katex.renderToString(mathExpression, {
             throwOnError: false,
-            displayMode: false, // For inline math
+            displayMode: isDisplay,
             strict: false,
+            output: 'html', // PDF 캡처 호환성을 위해 HTML 전용 출력 권장
           });
           const span = document.createElement('span');
           span.innerHTML = mathHtml;
           ref.current.appendChild(span);
         } catch (e) {
-          console.error("KaTeX rendering failed for expression:", mathExpression, e);
-          // Fallback to displaying the raw math expression if rendering fails
-          const errorTextNode = document.createTextNode(`$${mathExpression}$`);
-          ref.current.appendChild(errorTextNode);
+          ref.current.appendChild(document.createTextNode(match[0]));
         }
-        lastIndex = inlineMathRegex.lastIndex;
+        lastIndex = mathRegex.lastIndex;
       }
 
-      // Add any remaining plain text after the last math expression
       if (lastIndex < processedText.length) {
-        const plainText = processedText.substring(lastIndex);
-        const textNode = document.createTextNode(plainText);
-        ref.current.appendChild(textNode);
+        ref.current.appendChild(document.createTextNode(processedText.substring(lastIndex)));
       }
     }
-  }, [text]); // Re-render if the LaTeX text changes
+  }, [text]);
 
   return <span ref={ref} className="latex-math"></span>;
 };

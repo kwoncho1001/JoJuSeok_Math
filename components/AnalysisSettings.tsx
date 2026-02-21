@@ -164,7 +164,7 @@ export const AnalysisSettings: React.FC<AnalysisSettingsProps> = ({ config, setC
       <div className="p-6 border-t border-gray-200 bg-gray-50/50">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6 mb-6">
           <div className="space-y-4 p-4 bg-white rounded-lg border border-gray-200">
-            <h4 className="font-bold text-gray-800 border-b pb-2">핵심 로직 &amp; AI 설정</h4>
+            <h4 className="font-bold text-gray-800 border-b pb-2">핵심 로직 설정</h4>
             <SettingsInput
               label="데이터 부족 기준 (최소 테스트 개수)"
               value={config.minTestCount}
@@ -177,18 +177,6 @@ export const AnalysisSettings: React.FC<AnalysisSettingsProps> = ({ config, setC
               onChange={(v) => handleConfigChange('recentCount', v)}
               min={1}
             />
-            <div className="border-t pt-4 mt-4">
-               <label className="flex items-center justify-between gap-2 p-2 rounded-md hover:bg-gray-100 cursor-pointer text-sm">
-                   <span className="font-medium text-gray-700 flex items-center gap-2"><Bot className="w-5 h-5 text-indigo-500"/> AI 종합 리포트 생성</span>
-                   <input
-                       type="checkbox"
-                       checked={config.generateAiReport}
-                       onChange={(e) => handleConfigChange('generateAiReport', e.target.checked)}
-                       className="h-5 w-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer"
-                   />
-               </label>
-               <p className="text-xs text-gray-500 px-2 mt-1">AI 리포트가 필요 없는 경우 비활성화하여 API 할당량을 절약할 수 있습니다.</p>
-           </div>
           </div>
           <div className="space-y-4 p-4 bg-white rounded-lg border border-gray-200">
              <h4 className="font-bold text-gray-800 border-b pb-2">난이도별 가중치</h4>
@@ -218,7 +206,7 @@ export const AnalysisSettings: React.FC<AnalysisSettingsProps> = ({ config, setC
                 </div>
             </div>
             <div className="max-h-60 overflow-y-auto pr-2 space-y-4">
-              {Array.from(classificationTree.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([subject, largeUnitsMap]) => {
+              {Array.from(classificationTree.entries()).map(([subject, largeUnitsMap]) => {
                 const subjectState = getCheckboxState(subject);
                 return (
                   <div key={subject} className="bg-gray-50 p-3 rounded-md border border-gray-100">
@@ -236,7 +224,7 @@ export const AnalysisSettings: React.FC<AnalysisSettingsProps> = ({ config, setC
                       <span className="flex-grow">{subject}</span>
                     </label>
                     <div className="pl-6 mt-2 space-y-2">
-                      {Array.from(largeUnitsMap.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([largeUnit, smallUnits]) => {
+                      {Array.from(largeUnitsMap.entries()).map(([largeUnit, smallUnits]) => {
                         const largeUnitState = getCheckboxState(subject, largeUnit);
                         return (
                           <div key={largeUnit} className="bg-white p-2 rounded-md border border-gray-200">

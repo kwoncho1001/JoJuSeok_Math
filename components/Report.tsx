@@ -1,12 +1,10 @@
 
 
-import React, { useMemo, useRef, useState, useEffect } from 'react';
-import type { QuestionDBItem, ProgressMasterItem, TransactionLogItem, AggregatedUnitData, ScoredStudent, AnalysisConfig } from '../types';
-import { AiSummary } from './AiSummary';
-import { Download, LoaderCircle, Filter, Target, BarChart3, Activity, TrendingUp } from 'lucide-react';
+import React, { useMemo, useRef, useState } from 'react';
+import type { QuestionDBItem, ProgressMasterItem, TransactionLogItem, AggregatedUnitData, ScoredStudent, AnalysisConfig, ClassificationCsvItem } from '../types';
+import { Download, LoaderCircle, Target, BarChart3, TrendingUp } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import { GoogleGenAI } from '@google/genai';
 import { LatexRenderer } from './LatexRenderer'; // Fix: Corrected typo in import path
 // Removed import { generateStablePdf } from '../services/pdfService'; // No longer used
 
@@ -127,10 +125,9 @@ interface ReportProps {
   examScoreReport: ScoredStudent[];
   allSubUnitsCount: number;
   selectedSubUnitsCount: number;
-  generateAiReport: boolean;
   isBulkDownloadMode?: boolean;
-  aiSummaryText?: string; // New prop for pre-generated AI summary text
-  analysisConfig: AnalysisConfig; // Pass analysis config for AI summary generation
+  analysisConfig: AnalysisConfig;
+  classificationData?: ClassificationCsvItem[]; // Add classification data for ordering
 }
 
 const getBarColorStyle = (score: number): React.CSSProperties => {
@@ -160,13 +157,23 @@ const getMasteryLevel = (score: number): string => {
 const MetricGrid: React.FC<{ metrics: Record<string, string | number> }> = ({ metrics }) => (
   <div className="grid grid-cols-4 gap-2 mt-4 text-center">
     {Object.entries(metrics).map(([key, value]) => {
-      const displayValue = (key === '상 난이도' || key === '중 난이도' || key === '하 난이도') 
-                           ? (parseFloat(String(value)) < 0 ? '데이터 부족' : parseFloat(String(value)).toFixed(1))
-                           : value;
+      let displayValue: string | number = value;
+      let isDataMissing = false;
+
+      if (key === '상 난이도' || key === '중 난이도' || key === '하 난이도') {
+        const numValue = parseFloat(String(value));
+        if (numValue < 0) {
+          displayValue = '데이터 부족';
+          isDataMissing = true;
+        } else {
+          displayValue = numValue.toFixed(1);
+        }
+      }
+
       return (
         <div key={key} className="bg-slate-50 p-2 rounded-lg border border-slate-100 shadow-sm">
           <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tight mb-1">{key}</div>
-          <div className="text-sm font-bold text-slate-700">
+          <div className={`font-bold text-slate-700 ${isDataMissing ? 'text-xs' : 'text-sm'}`}>
             {displayValue}
           </div>
         </div>
@@ -177,15 +184,44 @@ const MetricGrid: React.FC<{ metrics: Record<string, string | number> }> = ({ me
 
 export const Report: React.FC<ReportProps> = ({ 
     studentId, selectedSubject, questionDb, progressMaster, transactionLog, examScoreReport,
-    allSubUnitsCount, selectedSubUnitsCount, generateAiReport, isBulkDownloadMode, aiSummaryText, analysisConfig
+    allSubUnitsCount, selectedSubUnitsCount, isBulkDownloadMode, analysisConfig, classificationData
 }) => {
     const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
-    const [localAiSummaryText, setLocalAiSummaryText] = useState<string | null>(aiSummaryText || null);
-    const [isAiLoading, setIsAiLoading] = useState(false);
-    const [aiError, setAiError] = useState('');
 
     const reportRef = useRef<HTMLDivElement>(null);
     
+    // Helper to get sort index from classification data
+    const getSortIndex = useMemo(() => {
+        const orderMap = new Map<string, number>();
+        if (classificationData) {
+            classificationData.forEach((item, index) => {
+                const subject = item['과목명'] || '미분류';
+                const large = item['대단원'] || '미분류';
+                const small = item['소단원'] || '일반';
+                const detail = item['세부 유형'];
+                
+                // Create composite keys for different levels of granularity
+                const subjectKey = subject;
+                const largeKey = `${subject}|${large}`;
+                const smallKey = `${subject}|${large}|${small}`;
+                const detailKey = `${subject}|${large}|${small}|${detail}`;
+
+                // Only set if not already set (to preserve first occurrence order)
+                if (!orderMap.has(subjectKey)) orderMap.set(subjectKey, index);
+                if (!orderMap.has(largeKey)) orderMap.set(largeKey, index);
+                if (!orderMap.has(smallKey)) orderMap.set(smallKey, index);
+                if (!orderMap.has(detailKey)) orderMap.set(detailKey, index);
+            });
+        }
+        return (key: string, level: 'subject' | 'large' | 'small' | 'detail', parentKey: string = '') => {
+            let lookupKey = key;
+            if (level !== 'subject') {
+                lookupKey = parentKey ? `${parentKey}|${key}` : key;
+            }
+            return orderMap.get(lookupKey) ?? 999999;
+        };
+    }, [classificationData]);
+
     const studentProgress = useMemo(() => progressMaster.filter(p => p.StudentID === studentId), [progressMaster, studentId]);
     const studentLog = useMemo(() => transactionLog.filter(l => l.StudentID === studentId), [transactionLog, studentId]);
     
@@ -214,8 +250,10 @@ export const Report: React.FC<ReportProps> = ({
             if (!detailList.includes(detail)) detailList.push(detail);
         });
 
-        return Array.from(root.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-    }, [questionDb, selectedSubject]);
+        return Array.from(root.entries()).sort((a, b) => {
+            return getSortIndex(a[0], 'subject') - getSortIndex(b[0], 'subject');
+        });
+    }, [questionDb, selectedSubject, getSortIndex]);
 
     const unitLevelAnalysis = useMemo(() => {
         const typeToUnitMap = new Map<string, { subject: string; large: string; medium: string }>();
@@ -292,13 +330,25 @@ export const Report: React.FC<ReportProps> = ({
                         accuracy: (largeUnitTotalCorrect / largeUnitTotalAttempts) * 100,
                         totalAttempts: largeUnitTotalAttempts,
                         constituentTypes: largeUnitTypes.size,
-                        subUnits: largeUnitSubUnits.sort((a,b) => a.name.localeCompare(b.name)),
+                        subUnits: largeUnitSubUnits.sort((a,b) => {
+                             // Sort small units by classification order
+                             return getSortIndex(a.name, 'small', `${subjectName}|${largeUnitName}`) - getSortIndex(b.name, 'small', `${subjectName}|${largeUnitName}`);
+                        }),
                     });
                 }
             }
         }
-        return result.sort((a,b) => a.name.localeCompare(b.name));
-    }, [questionDb, selectedSubject, studentProgress]);
+        return result.sort((a,b) => {
+             // Sort large units (formatted as "Subject > Large") by classification order
+             const [subjectA, largeA] = a.name.split(' > ');
+             const [subjectB, largeB] = b.name.split(' > ');
+             
+             if (subjectA !== subjectB) {
+                 return getSortIndex(subjectA, 'subject') - getSortIndex(subjectB, 'subject');
+             }
+             return getSortIndex(largeA, 'large', subjectA) - getSortIndex(largeB, 'large', subjectB);
+        });
+    }, [questionDb, selectedSubject, studentProgress, getSortIndex]);
 
     const reportTitle = useMemo(() => {
         const today = new Date();
@@ -307,37 +357,7 @@ export const Report: React.FC<ReportProps> = ({
         return `${today.getFullYear()}년 ${today.getMonth() + 1}월 ${week}주차 - ${studentId} 유형 분석 보고서`;
     }, [studentId]);
 
-    // Memoized data for AI summary generation
-    const memoizedDataForAi = useMemo(() => ({
-        examScoreReport, progressMaster, transactionLog, questionDb
-    }), [examScoreReport, progressMaster, transactionLog, questionDb]);
-
-    // Effect for real-time AI summary (when not printing/bulk downloading)
-    useEffect(() => {
-        const fetchLocalSummary = async () => {
-            // If aiSummaryText is provided (meaning it's for printing/bulk), do not fetch locally.
-            // Also, if AI generation is disabled, clear local summary.
-            if (!generateAiReport || isBulkDownloadMode || aiSummaryText !== undefined) {
-                if (!generateAiReport) setLocalAiSummaryText(''); 
-                setIsAiLoading(false); // Ensure loading is false if not generating
-                setAiError(''); // Clear error if not generating or using provided text
-                return;
-            }
-
-            setIsAiLoading(true);
-            setAiError('');
-            const summary = await generateAiSummaryContent(studentId, memoizedDataForAi, analysisConfig);
-            if (summary.startsWith("AI 서비스 이용량 초과") || summary.startsWith("AI 기반 피드백 생성에 실패")) {
-                setAiError(summary);
-                setLocalAiSummaryText('');
-            } else {
-                setLocalAiSummaryText(summary); 
-            }
-            setIsAiLoading(false);
-        };
-
-        fetchLocalSummary();
-    }, [studentId, memoizedDataForAi, generateAiReport, isBulkDownloadMode, aiSummaryText, analysisConfig]);
+    // Removed AI summary related logic and effects
 
 
     const handleDownloadPdf = async () => {
@@ -385,28 +405,18 @@ export const Report: React.FC<ReportProps> = ({
                 page-break-inside: avoid !important;
                 margin-bottom: 20px !important; /* Add consistent margin between sections */
             }
+            /* LaTeX 수식 캡처 보정 */
+            .capturing .latex-math {
+                display: inline-block !important; /* 캡처 시 위치 이탈 방지 */
+                font-family: 'KaTeX_Main', 'Inter', sans-serif !important;
+            }
         `;
         document.head.appendChild(style);
         reportElement.classList.add('capturing'); // Add capturing class to the report div
 
         // 폰트 및 이미지 로딩 완벽 대기
         if (document.fonts) await document.fonts.ready;
-        await new Promise(resolve => setTimeout(resolve, 1000)); // 애니메이션이 끝날 시간을 넉넉히 확보
-
-        // AI summary pre-generation for PDF (if enabled)
-        let summaryTextForPdf = aiSummaryText || '';
-        if (generateAiReport && !aiSummaryText && !isBulkDownloadMode) { 
-            setLocalAiSummaryText(null); // Clear local state to show loading
-            setIsAiLoading(true);
-            setAiError('');
-            summaryTextForPdf = await generateAiSummaryContent(studentId, memoizedDataForAi, analysisConfig);
-            if (summaryTextForPdf.startsWith("AI 서비스 이용량 초과") || summaryTextForPdf.startsWith("AI 기반 피드백 생성에 실패")) {
-                setAiError(summaryTextForPdf);
-                summaryTextForPdf = ''; // Don't include error in PDF if it's not a placeholder
-            }
-            setLocalAiSummaryText(summaryTextForPdf); // Update local state after generation
-            setIsAiLoading(false);
-        }
+        await new Promise(resolve => setTimeout(resolve, 1500)); // 시간을 1.5초로 늘림
 
         try {
             const pdf = new jsPDF('p', 'mm', 'a4');
@@ -421,6 +431,8 @@ export const Report: React.FC<ReportProps> = ({
                 useCORS: true,
                 backgroundColor: '#ffffff',
                 foreignObjectRendering: false, // 검은 박스 방지 핵심 설정
+                logging: true,
+                fontEmbedCSS: true // 폰트 포함 설정 추가
                 // Removed windowWidth: 900, relying on CSS for overall width
             });
             const headerImgData = headerCanvas.toDataURL('image/jpeg', 0.8);
@@ -437,7 +449,9 @@ export const Report: React.FC<ReportProps> = ({
                     useCORS: true,
                     backgroundColor: '#ffffff',
                     // Removed windowWidth: 900, relying on CSS for overall width
-                    foreignObjectRendering: false
+                    foreignObjectRendering: false,
+                    logging: true,
+                    fontEmbedCSS: true // 폰트 포함 설정 추가
                 });
 
                 const imgData = canvas.toDataURL('image/jpeg', 0.8);
@@ -470,9 +484,6 @@ export const Report: React.FC<ReportProps> = ({
             reportElement.style.cssText = originalCssText; // Restore original inline styles
             style.remove(); // Remove injected style
             setIsDownloadingPdf(false);
-            if (!isBulkDownloadMode) { 
-                setAiError(''); // Clear AI error state if not in bulk mode
-            }
         }
     };
     
@@ -488,11 +499,11 @@ export const Report: React.FC<ReportProps> = ({
                     </div>
                     <button 
                         onClick={handleDownloadPdf}
-                        disabled={isDownloadingPdf || (generateAiReport && isAiLoading)}
+                        disabled={isDownloadingPdf}
                         className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 disabled:bg-gray-400"
                     >
-                        {isDownloadingPdf ? <LoaderCircle className="w-5 h-5 animate-spin" /> : (generateAiReport && isAiLoading) ? <LoaderCircle className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
-                        <span>{isDownloadingPdf ? "PDF 생성 중..." : (generateAiReport && isAiLoading) ? "AI 분석 중..." : "PDF 다운로드"}</span>
+                        {isDownloadingPdf ? <LoaderCircle className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                        <span>{isDownloadingPdf ? "PDF 생성 중..." : "PDF 다운로드"}</span>
                     </button>
                 </div>
             )}
@@ -518,26 +529,9 @@ export const Report: React.FC<ReportProps> = ({
                     </div>
                 </div>
                 
-                {/* [AI 총평 섹션] */}
-                {generateAiReport && (
-                    <div data-pdf-section className="py-2">
-                        <AiSummary 
-                            studentId={studentId}
-                            isPrinting={isDownloadingPdf || isBulkDownloadMode}
-                            examScoreReport={examScoreReport}
-                            progressMaster={studentProgress}
-                            transactionLog={studentLog}
-                            questionDb={questionDb}
-                            aiSummaryText={aiSummaryText || localAiSummaryText} // Pass pre-generated or local AI summary
-                            isAiLoading={isAiLoading}
-                            aiError={aiError}
-                        />
-                    </div>
-                )}
-
                 {/* [단원별 요약 섹션] */}
                 {unitLevelAnalysis.length > 0 && (
-                    <div data-pdf-section className="space-y-8 bg-slate-50/50 p-8 rounded-[2rem] border border-slate-100 shadow-sm">
+                    <div id="section-unit-summary" data-pdf-section className="space-y-8 bg-slate-50/50 p-8 rounded-[2rem] border border-slate-100 shadow-sm">
                         <div className="flex items-center gap-3 pb-4 border-b border-slate-200">
                             <BarChart3 className="w-6 h-6 text-indigo-500" />
                             <h2 className="text-2xl font-bold text-slate-800 tracking-tight">단원별 성취도 요약</h2>
@@ -594,13 +588,8 @@ export const Report: React.FC<ReportProps> = ({
 
                     return (
                         <div key={subject} className="space-y-10">
-                            <div data-pdf-section className="flex items-center gap-4 py-6 border-b-4 border-indigo-600">
-                                <Target className="w-8 h-8 text-indigo-600" />
-                                <h3 className="text-3xl font-black text-slate-800 uppercase tracking-tight">{subject} 정밀 분석}</h3>
-                            </div>
-                            
                             <div className="space-y-16">
-                                {activeLargeUnits.sort((a, b) => a[0].localeCompare(b[0])).map(([largeUnit, smallUnitsMap]) => {
+                                {activeLargeUnits.sort((a, b) => getSortIndex(a[0], 'large', subject) - getSortIndex(b[0], 'large', subject)).map(([largeUnit, smallUnitsMap]) => {
                                     const activeSmallUnits = Array.from(smallUnitsMap.entries()).filter(([_, detailTypes]) => {
                                         return (detailTypes as string[]).some((type: string) => {
                                             const prog = progressMap.get(type);
@@ -612,67 +601,84 @@ export const Report: React.FC<ReportProps> = ({
 
                                     return (
                                         <div key={largeUnit} className="space-y-12">
-                                            {activeSmallUnits.sort((a, b) => a[0].localeCompare(b[0])).map(([smallUnit, detailTypes], index) => {
+                                            {activeSmallUnits.sort((a, b) => getSortIndex(a[0], 'small', `${subject}|${largeUnit}`) - getSortIndex(b[0], 'small', `${subject}|${largeUnit}`)).map(([smallUnit, detailTypes], smallUnitIndex) => {
                                                 const activeDetails = (detailTypes as string[]).filter((type: string) => {
                                                     const prog = progressMap.get(type);
                                                     return prog && prog.Total_Attempts > 0;
                                                 });
+                                                
+                                                // Sort active details based on classification order
+                                                activeDetails.sort((a, b) => getSortIndex(a, 'detail', `${subject}|${largeUnit}|${smallUnit}`) - getSortIndex(b, 'detail', `${subject}|${largeUnit}|${smallUnit}`));
+
+                                                // Pagination logic: Chunk details into groups of 8
+                                                const chunkSize = 8;
+                                                const detailChunks = [];
+                                                for (let i = 0; i < activeDetails.length; i += chunkSize) {
+                                                    detailChunks.push(activeDetails.slice(i, i + chunkSize));
+                                                }
 
                                                 return (
-                                                    <div key={smallUnit} data-pdf-section className="space-y-6">
-                                                        {index === 0 && (
-                                                            <div className="pb-4 mb-8 border-b-2 border-indigo-300"> {/* 평행선 위에 대단원: A */}
-                                                                <h4 className="text-2xl font-black text-slate-800">
-                                                                    <span className="text-indigo-600">대단원-</span> {largeUnit}
-                                                                </h4>
-                                                            </div>
-                                                        )}
-                                                        <div className="flex items-center gap-4 mb-2">
-                                                            <TrendingUp className="w-4 h-4 text-indigo-400" />
-                                                            <h5 className="text-base font-black text-slate-500 uppercase tracking-widest"><span className="text-indigo-400">소단원-</span> {smallUnit}</h5>
-                                                            <div className="flex-grow h-px bg-slate-200"></div>
-                                                        </div>
-                                                        
-                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                                            {activeDetails.map(type => {
-                                                                const progress = progressMap.get(type);
-                                                                if (!progress) return null;
-                                                                const displayScore = progress.DisplayScore != null ? progress.DisplayScore : -1;
+                                                    <React.Fragment key={smallUnit}>
+                                                        {detailChunks.map((chunk, chunkIndex) => (
+                                                            <div 
+                                                                id={`section-detail-${largeUnit.replace(/\s+/g, '_')}-${smallUnit.replace(/\s+/g, '_')}-${smallUnitIndex}-${chunkIndex}`} 
+                                                                key={`${smallUnit}-${chunkIndex}`} 
+                                                                data-pdf-section 
+                                                                className="space-y-6"
+                                                            >
                                                                 
-                                                                return (
-                                                                    <div key={type} className="p-8 bg-white rounded-[2rem] border border-slate-100 shadow-lg hover:shadow-2xl transition-all group border-b-4 border-b-transparent hover:border-b-indigo-500">
-                                                                        <div className="flex items-start justify-between mb-6">
-                                                                            <div className="space-y-1">
-                                                                                <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest leading-none mb-2">Detailed Type</p>
-                                                                                <p className="font-black text-slate-800 text-xl leading-snug group-hover:text-indigo-600 transition-colors">
-                                                                                    <LatexRenderer text={type} />
-                                                                                </p>
-                                                                            </div>
-                                                                            <div className="text-right">
-                                                                                <p className="text-3xl font-black text-slate-900 leading-none">{displayScore < 0 ? '데이터 부족' : displayScore.toFixed(1)}</p>
-                                                                                <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-widest">{getMasteryLevel(displayScore)}</p>
-                                                                            </div>
-                                                                        </div>
+                                                                <div className="flex items-center gap-4 mb-2">
+                                                                    <TrendingUp className="w-4 h-4 text-indigo-400" />
+                                                                    <h5 className="text-base font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                                                                        <span className="text-indigo-600">대단원:</span> <span className="text-slate-700">{largeUnit}</span>
+                                                                        <span className="mx-2 text-slate-300">|</span>
+                                                                        <span className="text-indigo-400">소단원:</span> <span className="text-slate-700">{smallUnit}</span>
+                                                                        {detailChunks.length > 1 && <span className="text-xs text-gray-400 ml-2">({chunkIndex + 1}/{detailChunks.length})</span>}
+                                                                    </h5>
+                                                                    <div className="flex-grow h-px bg-slate-200"></div>
+                                                                </div>
+                                                                
+                                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                                    {chunk.map(type => {
+                                                                        const progress = progressMap.get(type);
+                                                                        if (!progress) return null;
+                                                                        const displayScore = progress.DisplayScore != null ? progress.DisplayScore : -1;
                                                                         
-                                                                        <div className="w-full bg-slate-100 rounded-full h-4 overflow-hidden shadow-inner mb-4">
-                                                                            <div 
-                                                                                className="h-full rounded-full transition-all duration-1000" 
-                                                                                style={{ width: `${displayScore < 0 ? 0 : displayScore}%`, ...getBarColorStyle(displayScore) }}
-                                                                            ></div>
-                                                                        </div>
-                                                                        
-                                                                        {/* 난이도별 배치 변경: 총 풀이 - 하 - 중 - 상 */}
-                                                                        <MetricGrid metrics={{
-                                                                            "총 풀이": progress.Total_Attempts,
-                                                                            "하 난이도": progress.Score_Low,
-                                                                            "중 난이도": progress.Score_Mid,
-                                                                            "상 난이도": progress.Score_High,
-                                                                        }}/>
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    </div>
+                                                                        return (
+                                                                            <div key={type} className="p-8 bg-white rounded-[2rem] border border-slate-300 shadow-lg hover:shadow-2xl transition-all group border-b-4 border-b-transparent hover:border-b-indigo-500">
+                                                                                <div className="flex items-start justify-between mb-6 gap-6">
+                                                                                    <div className="space-y-1 min-w-0">
+                                                                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-2">Detailed Type</p>
+                                                                                        <p className="font-black text-slate-800 text-lg tracking-tight whitespace-nowrap overflow-hidden text-ellipsis group-hover:text-indigo-600 transition-colors">
+                                                                                            <LatexRenderer text={type} />
+                                                                                        </p>
+                                                                                    </div>
+                                                                                    <div className="text-right flex-shrink-0">
+                                                                                        <p className="text-3xl font-black text-slate-900 leading-none">{displayScore < 0 ? '데이터 부족' : displayScore.toFixed(1)}</p>
+                                                                                        <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-widest">{getMasteryLevel(displayScore)}</p>
+                                                                                    </div>
+                                                                                </div>
+                                                                                
+                                                                                <div className="w-full bg-slate-100 rounded-full h-4 overflow-hidden shadow-inner mb-4">
+                                                                                    <div 
+                                                                                        className="h-full rounded-full transition-all duration-1000" 
+                                                                                        style={{ width: `${displayScore < 0 ? 0 : displayScore}%`, ...getBarColorStyle(displayScore) }}
+                                                                                    ></div>
+                                                                                </div>
+                                                                                
+                                                                                <MetricGrid metrics={{
+                                                                                    "총 풀이": progress.Total_Attempts,
+                                                                                    "하 난이도": progress.Score_Low,
+                                                                                    "중 난이도": progress.Score_Mid,
+                                                                                    "상 난이도": progress.Score_High,
+                                                                                }}/>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </React.Fragment>
                                                 );
                                             })}
                                         </div>
