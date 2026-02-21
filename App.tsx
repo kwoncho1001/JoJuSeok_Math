@@ -652,6 +652,9 @@ export const App: React.FC = () => {
       
       const response = await fetch(GAS_URL, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain',
+        },
         body: JSON.stringify({
           email: info.email,
           studentName: selectedStudent,
