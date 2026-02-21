@@ -540,6 +540,12 @@ export const App: React.FC = () => {
 
             pdf.addImage(imgData, 'JPEG', margin, currentY, contentWidth, imgHeight, undefined, 'MEDIUM');
             currentY += imgHeight + 4; // Spacing between sections
+
+            // Force page break after Unit Summary to ensure Details start on Page 2
+            if (section.id === 'section-unit-summary') {
+                pdf.addPage();
+                currentY = margin;
+            }
         }
 
         const reportTitle = `${new Date().getFullYear()}년 ${new Date().getMonth() + 1}월 ${Math.ceil((new Date().getDate() + new Date(new Date().getFullYear(), new Date().getMonth(), 1).getDay()) / 7)}주차 - ${studentIdToGenerate} 유형 분석 보고서`;
@@ -653,7 +659,7 @@ export const App: React.FC = () => {
       const response = await fetch(GAS_URL, {
         method: 'POST',
         headers: {
-          'Content-Type': 'text/plain',
+          'Content-Type': 'text/plain', // 이 부분을 추가하여 CORS Preflight를 피합니다
         },
         body: JSON.stringify({
           email: info.email,
@@ -663,6 +669,8 @@ export const App: React.FC = () => {
         })
       });
 
+      // fetch가 성공하더라도 GAS에서 리다이렉트(302)가 발생하므로 
+      // 응답 처리에 주의가 필요할 수 있으나, 기본적으로 아래와 같이 처리합니다.
       const result = await response.json();
       if (result.status === 'success') {
         alert(`${selectedStudent} 학생(${info.email})에게 메일을 보냈습니다.`);
@@ -670,6 +678,7 @@ export const App: React.FC = () => {
         throw new Error(result.message);
       }
     } catch (err: any) {
+      // CORS 문제 발생 시 이 catch 블록에서 "Failed to fetch"가 잡힙니다.
       alert("메일 전송 실패: " + err.message);
     } finally {
       setIsSendingEmail(false);

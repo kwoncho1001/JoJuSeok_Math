@@ -480,6 +480,12 @@ export const Report: React.FC<ReportProps> = ({
 
                 pdf.addImage(imgData, 'JPEG', margin, currentY, contentWidth, imgHeight, undefined, 'MEDIUM');
                 currentY += imgHeight + 4;
+
+                // Force page break after Unit Summary to ensure Details start on Page 2
+                if (section.id === 'section-unit-summary') {
+                    pdf.addPage();
+                    currentY = margin;
+                }
             }
 
             pdf.save(`${reportTitle}.pdf`);
@@ -669,8 +675,7 @@ export const Report: React.FC<ReportProps> = ({
                                                                             <div key={type} className="p-8 bg-white rounded-[2rem] border border-slate-100 shadow-lg hover:shadow-2xl transition-all group border-b-4 border-b-transparent hover:border-b-indigo-500">
                                                                                 <div className="flex items-start justify-between mb-6">
                                                                                     <div className="space-y-1">
-                                                                                        <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest leading-none mb-2">Detailed Type</p>
-                                                                                        <p className="font-black text-slate-800 text-xl leading-snug group-hover:text-indigo-600 transition-colors">
+                                                                                        <p className="font-black text-slate-800 text-xl leading-snug group-hover:text-indigo-600 transition-colors min-h-[3.5rem] flex items-center">
                                                                                             <LatexRenderer text={type} />
                                                                                         </p>
                                                                                     </div>
