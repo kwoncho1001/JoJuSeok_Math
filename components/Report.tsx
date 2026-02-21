@@ -645,15 +645,15 @@ export const Report: React.FC<ReportProps> = ({
                                                                         const displayScore = progress.DisplayScore != null ? progress.DisplayScore : -1;
                                                                         
                                                                         return (
-                                                                            <div key={type} className="p-8 bg-white rounded-[2rem] border border-slate-300 shadow-lg hover:shadow-2xl transition-all group border-b-4 border-b-transparent hover:border-b-indigo-500">
-                                                                                <div className="flex items-start justify-between mb-6 gap-6">
-                                                                                    <div className="space-y-1 min-w-0">
-                                                                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-2">Detailed Type</p>
-                                                                                        <p className="font-black text-slate-800 text-lg tracking-tight whitespace-nowrap overflow-hidden text-ellipsis group-hover:text-indigo-600 transition-colors">
+                                                                            <div key={type} className="p-8 bg-white rounded-[2rem] border border-slate-100 shadow-lg hover:shadow-2xl transition-all group border-b-4 border-b-transparent hover:border-b-indigo-500">
+                                                                                <div className="flex items-start justify-between mb-6">
+                                                                                    <div className="space-y-1">
+                                                                                        <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest leading-none mb-2">Detailed Type</p>
+                                                                                        <p className="font-black text-slate-800 text-xl leading-snug group-hover:text-indigo-600 transition-colors">
                                                                                             <LatexRenderer text={type} />
                                                                                         </p>
                                                                                     </div>
-                                                                                    <div className="text-right flex-shrink-0">
+                                                                                    <div className="text-right">
                                                                                         <p className="text-3xl font-black text-slate-900 leading-none">{displayScore < 0 ? '데이터 부족' : displayScore.toFixed(1)}</p>
                                                                                         <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-widest">{getMasteryLevel(displayScore)}</p>
                                                                                     </div>
@@ -689,6 +689,12 @@ export const Report: React.FC<ReportProps> = ({
                     );
                 })}
             </div>
+
+            {/* Footer Line */}
+            <div data-pdf-section className="mt-16 pb-8">
+                <div className="w-full border-t-2 border-slate-200"></div>
+            </div>
+
             {/* Removed the inline style block as these rules are now dynamically injected */}
         </div>
     );
