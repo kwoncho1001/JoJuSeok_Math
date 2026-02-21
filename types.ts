@@ -110,3 +110,8 @@ export interface AnalysisConfig {
   };
   selectedSubUnits: string[]; // Stores full paths, e.g., "과목1|대단원A|소단원X"
 }
+
+export interface StudentMetadata {
+  isActive: boolean;
+  canonicalEmail: string;
+}

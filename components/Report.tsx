@@ -2,7 +2,7 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import type { QuestionDBItem, ProgressMasterItem, TransactionLogItem, AggregatedUnitData, ScoredStudent, AnalysisConfig, ClassificationCsvItem } from '../types';
-import { Download, LoaderCircle, Target, BarChart3, TrendingUp } from 'lucide-react';
+import { Download, LoaderCircle, Target, BarChart3, TrendingUp, Mail } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { LatexRenderer } from './LatexRenderer'; // Fix: Corrected typo in import path
@@ -128,6 +128,8 @@ interface ReportProps {
   isBulkDownloadMode?: boolean;
   analysisConfig: AnalysisConfig;
   classificationData?: ClassificationCsvItem[]; // Add classification data for ordering
+  onSendEmail?: () => void;
+  isEmailing?: boolean;
 }
 
 const getBarColorStyle = (score: number): React.CSSProperties => {
@@ -184,7 +186,8 @@ const MetricGrid: React.FC<{ metrics: Record<string, string | number> }> = ({ me
 
 export const Report: React.FC<ReportProps> = ({ 
     studentId, selectedSubject, questionDb, progressMaster, transactionLog, examScoreReport,
-    allSubUnitsCount, selectedSubUnitsCount, isBulkDownloadMode, analysisConfig, classificationData
+    allSubUnitsCount, selectedSubUnitsCount, isBulkDownloadMode, analysisConfig, classificationData,
+    onSendEmail, isEmailing
 }) => {
     const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
@@ -467,6 +470,12 @@ export const Report: React.FC<ReportProps> = ({
                 if (currentY === margin) {
                     pdf.addImage(headerImgData, 'JPEG', margin, margin, contentWidth, headerHeight, undefined, 'MEDIUM');
                     currentY += headerHeight + 6;
+
+                    // Footer: Indigo Line
+                    const pageHeight = pdf.internal.pageSize.getHeight();
+                    pdf.setDrawColor(79, 70, 229); // Indigo-600
+                    pdf.setLineWidth(0.5);
+                    pdf.line(margin, pageHeight - margin, pageWidth - margin, pageHeight - margin);
                 }
 
                 pdf.addImage(imgData, 'JPEG', margin, currentY, contentWidth, imgHeight, undefined, 'MEDIUM');
@@ -497,14 +506,26 @@ export const Report: React.FC<ReportProps> = ({
                         </h3>
                         <p className="text-gray-500 mt-1 font-medium italic">실시간 학습 성취도 및 단원별 숙련도 분석</p>
                     </div>
-                    <button 
-                        onClick={handleDownloadPdf}
-                        disabled={isDownloadingPdf}
-                        className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 disabled:bg-gray-400"
-                    >
-                        {isDownloadingPdf ? <LoaderCircle className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
-                        <span>{isDownloadingPdf ? "PDF 생성 중..." : "PDF 다운로드"}</span>
-                    </button>
+                    <div className="flex gap-3">
+                        <button 
+                            onClick={handleDownloadPdf}
+                            disabled={isDownloadingPdf}
+                            className="flex items-center gap-2 px-6 py-3 bg-indigo-500 text-white rounded-2xl font-bold hover:bg-indigo-600 transition-all shadow-xl shadow-indigo-100 disabled:bg-gray-400"
+                        >
+                            {isDownloadingPdf ? <LoaderCircle className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                            <span>{isDownloadingPdf ? "PDF 생성 중..." : "PDF 다운로드"}</span>
+                        </button>
+                        {onSendEmail && (
+                            <button 
+                                onClick={onSendEmail}
+                                disabled={isEmailing}
+                                className="flex items-center gap-2 px-6 py-3 bg-indigo-700 text-white rounded-2xl font-bold hover:bg-indigo-800 transition-all shadow-xl shadow-indigo-100 disabled:bg-gray-400"
+                            >
+                                {isEmailing ? <LoaderCircle className="w-5 h-5 animate-spin" /> : <Mail className="w-5 h-5" />}
+                                <span>Email로 전송</span>
+                            </button>
+                        )}
+                    </div>
                 </div>
             )}
             

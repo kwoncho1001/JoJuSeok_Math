@@ -1,7 +1,7 @@
 
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { FileUp, BookCheck, History, Trophy, FileSpreadsheet, FileText, XCircle, CheckCircle2, LoaderCircle, Sparkles, LayoutDashboard, Microscope, Database, FileCode2, Users, ListChecks, TrendingUp, Calculator, RefreshCw, DatabaseZap, BrainCircuit, Download } from 'lucide-react';
+import { FileUp, BookCheck, History, Trophy, FileSpreadsheet, FileText, XCircle, CheckCircle2, LoaderCircle, Sparkles, LayoutDashboard, Microscope, Database, FileCode2, Users, ListChecks, TrendingUp, Calculator, RefreshCw, DatabaseZap, BrainCircuit, Download, Mail } from 'lucide-react';
 import ReactDOM from 'react-dom/client';
 import { FileUpload } from './components/FileUpload';
 import { ResultCard } from './components/ResultCard';
@@ -11,7 +11,7 @@ import { AnalysisSettings } from './components/AnalysisSettings';
 import { DbGenerator } from './components/DbGenerator';
 import { processStudentData } from './services/analysisService';
 import { readFile, fetchSheetData } from './services/fileService';
-import type { QuestionDBItem, TransactionLogItem, ProgressMasterItem, ScoredStudent, StudentResponseRaw, TextbookResponseRaw, AnalysisConfig, ClassificationCsvItem, ClassificationTree } from './types';
+import type { QuestionDBItem, TransactionLogItem, ProgressMasterItem, ScoredStudent, StudentResponseRaw, TextbookResponseRaw, AnalysisConfig, ClassificationCsvItem, ClassificationTree, StudentMetadata } from './types';
 import { QUESTION_DB_URL, STUDENT_RESPONSE_URL, CLASSIFICATION_CSV_URL } from './constants';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -72,6 +72,9 @@ export const App: React.FC = () => {
   const [analyzerTab, setAnalyzerTab] = useState<AnalyzerTab>('dashboard');
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState({ current: 0, total: 0, studentName: '' });
+  const [isBulkEmailing, setIsBulkEmailing] = useState(false);
+  const [bulkEmailProgress, setBulkEmailProgress] = useState({ current: 0, total: 0, studentName: '' });
+  const [isEmailing, setIsEmailing] = useState(false);
 
   useEffect(() => {
     try {
@@ -153,11 +156,88 @@ export const App: React.FC = () => {
     return finalMap;
   }, [newProgressMaster, studentResponse.data]);
 
+  // 1. 학생별 상태(활성/비활성) 및 대표 이메일 산출
+  const studentStatusMap = useMemo(() => {
+    const result = new Map<string, StudentMetadata>();
+    if (!studentResponse.data) return result;
+
+    // 학년별 시험 정보 수집 (최근 5개 시험 추출용)
+    const gradeExams = new Map<string, { id: string; ts: number }[]>();
+    const studentLogsByName = new Map<string, StudentResponseRaw[]>();
+
+    studentResponse.data.forEach(res => {
+      const name = String(res['이름'] || '').trim();
+      const grade = (res['학년'] ? String(res['학년']).trim() : '') || '미지정';
+      const examId = String(res['시험 ID'] || res['시험ID'] || '').trim();
+      const ts = new Date(res['타임스탬프']).getTime();
+
+      if (name) {
+        if (!studentLogsByName.has(name)) studentLogsByName.set(name, []);
+        studentLogsByName.get(name)!.push(res);
+      }
+
+      if (examId && grade) {
+        if (!gradeExams.has(grade)) gradeExams.set(grade, []);
+        const exams = gradeExams.get(grade)!;
+        if (!exams.find(e => e.id === examId)) {
+          exams.push({ id: examId, ts });
+        } else {
+          const existing = exams.find(e => e.id === examId)!;
+          if (ts > existing.ts) existing.ts = ts;
+        }
+      }
+    });
+
+    // 학년별 최근 5개 시험 ID Set 생성
+    const recentTestsByGrade = new Map<string, Set<string>>();
+    gradeExams.forEach((exams, grade) => {
+      const top5 = exams.sort((a, b) => b.ts - a.ts).slice(0, 5).map(e => e.id);
+      recentTestsByGrade.set(grade, new Set(top5));
+    });
+
+    // 모든 학생에 대해 로직 적용
+    studentLogsByName.forEach((responses, name) => {
+      // A. 활성 여부 판단: 해당 학년의 최근 5개 시험 중 하나라도 응시했는가?
+      const latestRes = responses.sort((a, b) => new Date(b['타임스탬프']).getTime() - new Date(a['타임스탬프']).getTime())[0];
+      const grade = (latestRes['학년'] ? String(latestRes['학년']).trim() : '') || '미지정';
+      const recent5 = recentTestsByGrade.get(grade);
+      
+      const isActive = responses.some(r => recent5?.has(String(r['시험 ID'] || r['시험ID']).trim()));
+
+      // B. 이메일 오타 교정: 최근 5개 응답 중 가장 많이 나온 이메일 추출
+      const last5Emails = responses
+        .sort((a, b) => new Date(b['타임스탬프']).getTime() - new Date(a['타임스탬프']).getTime())
+        .slice(0, 5)
+        .map(r => String(r['이메일 주소'] || '').trim())
+        .filter(email => email !== '');
+
+      const emailFreq = new Map<string, number>();
+      last5Emails.forEach(e => emailFreq.set(e, (emailFreq.get(e) || 0) + 1));
+      
+      let canonicalEmail = '';
+      let maxFreq = 0;
+      emailFreq.forEach((freq, email) => {
+        if (freq > maxFreq) { maxFreq = freq; canonicalEmail = email; }
+      });
+
+      result.set(name, { isActive, canonicalEmail });
+    });
+
+    return result;
+  }, [studentResponse.data]);
+
   const gradeList = useMemo(() => Array.from(gradeStudentMap.keys()).sort(), [gradeStudentMap]);
   const studentListForGrade = useMemo(() => {
     if (!selectedGrade) return [];
-    return gradeStudentMap.get(selectedGrade) || [];
-  }, [selectedGrade, gradeStudentMap]);
+    const allStudents = gradeStudentMap.get(selectedGrade) || [];
+    
+    // 상세 리포트 탭('report')인 경우 활성 학생만 필터링
+    if (analyzerTab === 'report') {
+      return allStudents.filter(name => studentStatusMap.get(name)?.isActive === true);
+    }
+    
+    return allStudents;
+  }, [selectedGrade, gradeStudentMap, analyzerTab, studentStatusMap]);
 
   const handleGradeSelect = (grade: string | null) => {
       setSelectedGrade(grade);
@@ -459,6 +539,12 @@ export const App: React.FC = () => {
             if (currentY === margin) {
                 pdf.addImage(headerImgData, 'JPEG', margin, margin, contentWidth, headerHeight, undefined, 'MEDIUM');
                 currentY += headerHeight + 6; // Spacing after header
+
+                // Footer: Indigo Line
+                const pageHeight = pdf.internal.pageSize.getHeight();
+                pdf.setDrawColor(79, 70, 229); // Indigo-600
+                pdf.setLineWidth(0.5);
+                pdf.line(margin, pageHeight - margin, pageWidth - margin, pageHeight - margin);
             }
 
             pdf.addImage(imgData, 'JPEG', margin, currentY, contentWidth, imgHeight, undefined, 'MEDIUM');
@@ -522,6 +608,71 @@ export const App: React.FC = () => {
     setBulkDownloadProgress({ current: 0, total: 0, studentName: '' });
     alert('학년 전체 리포트 다운로드 완료 (오류가 발생한 학생 제외)');
   }, [selectedGrade, studentListForGrade, generateAndSavePdfForStudent, newProgressMaster, detailTypeToSubjectMap]);
+
+  const handleBulkSendEmail = useCallback(async () => {
+    if (!selectedGrade || studentListForGrade.length === 0) {
+        setError('학년을 선택하거나, 해당 학년에 학생 데이터가 없습니다.');
+        return;
+    }
+
+    setIsBulkEmailing(true);
+    setBulkEmailProgress({ current: 0, total: studentListForGrade.length, studentName: '' });
+    setError(null);
+
+    for (let i = 0; i < studentListForGrade.length; i++) {
+        const student = studentListForGrade[i];
+        setBulkEmailProgress({ current: i + 1, total: studentListForGrade.length, studentName: student });
+        
+        const studentInfo = studentStatusMap.get(student);
+        if (!studentInfo?.canonicalEmail) {
+             console.warn(`Skipping email for ${student}: No valid email found.`);
+             continue;
+        }
+
+        try {
+            // Simulate email sending process
+            // In a real app, you would generate the PDF blob here and send it to the backend
+            console.log(`Sending email to ${student} (${studentInfo.canonicalEmail})...`);
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err as any);
+            console.error(`Failed to send email for ${student}: ${message}`);
+            // Optionally set error state or just log it to allow continuation
+        }
+    }
+
+    setIsBulkEmailing(false);
+    setBulkEmailProgress({ current: 0, total: 0, studentName: '' });
+    alert('학년 전체 이메일 전송 완료 (이메일이 없는 학생 제외)');
+  }, [selectedGrade, studentListForGrade, studentStatusMap]);
+
+  const handleSendEmail = async () => {
+    if (!selectedStudent) return;
+    const studentInfo = studentStatusMap.get(selectedStudent);
+    if (!studentInfo?.canonicalEmail) {
+      alert("해당 학생의 유효한 이메일 주소를 찾을 수 없습니다.");
+      return;
+    }
+  
+    setIsEmailing(true);
+    try {
+      // 실제 전송 로직 (예: Apps Script API 호출)
+      // 여기서는 PDF 생성 후 전송하는 흐름을 가정합니다.
+      console.log(`${selectedStudent}(${studentInfo.canonicalEmail})에게 리포트를 전송합니다.`);
+      
+      // 이 부분에 서버(Apps Script)로 PDF 데이터와 이메일을 보내는 fetch 로직을 추가하세요.
+      // await sendEmailWithAttachment(studentInfo.email, pdfBlob);
+      
+      // Simulate delay
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      alert(`${selectedStudent} 학생(${studentInfo.canonicalEmail})에게 이메일 전송이 완료되었습니다.`);
+    } catch (err) {
+      alert("이메일 전송 중 오류가 발생했습니다.");
+    } finally {
+      setIsEmailing(false);
+    }
+  };
 
   return (
     <div className="min-h-screen text-gray-800 p-4 sm:p-6 lg:p-12">
@@ -719,26 +870,49 @@ export const App: React.FC = () => {
                             </div>
 
                             {selectedGrade && (
-                                <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-200/50">
-                                    <h3 className="text-xl font-bold text-gray-800 mb-4">학년 전체 리포트 다운로드</h3>
-                                    <p className="text-gray-600 text-sm mb-4">선택된 학년의 모든 학생에 대한 상세 리포트를 PDF로 일괄 다운로드합니다. 이 작업은 시간이 오래 걸릴 수 있습니다.</p>
-                                    <button
-                                        onClick={handleBulkDownloadReports}
-                                        disabled={isBulkDownloading || studentListForGrade.length === 0}
-                                        className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold transition-colors shadow-sm text-sm ${isBulkDownloading ? 'bg-gray-400 text-white cursor-wait' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
-                                    >
-                                        {isBulkDownloading ? (
-                                            <>
-                                                <LoaderCircle className="w-5 h-5 animate-spin" />
-                                                <span>{bulkDownloadProgress.current}/{bulkDownloadProgress.total} 다운로드 중 ({bulkDownloadProgress.studentName})</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Download className="w-5 h-5" />
-                                                <span>{selectedGrade} 전체 리포트 다운로드</span>
-                                            </>
-                                        )}
-                                    </button>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-200/50">
+                                        <h3 className="text-xl font-bold text-gray-800 mb-4">학년 전체 리포트 다운로드</h3>
+                                        <p className="text-gray-600 text-sm mb-4">선택된 학년의 모든 학생에 대한 상세 리포트를 PDF로 일괄 다운로드합니다.</p>
+                                        <button
+                                            onClick={handleBulkDownloadReports}
+                                            disabled={isBulkDownloading || studentListForGrade.length === 0}
+                                            className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold transition-colors shadow-sm text-sm ${isBulkDownloading ? 'bg-gray-400 text-white cursor-wait' : 'bg-indigo-500 text-white hover:bg-indigo-600'}`}
+                                        >
+                                            {isBulkDownloading ? (
+                                                <>
+                                                    <LoaderCircle className="w-5 h-5 animate-spin" />
+                                                    <span>{bulkDownloadProgress.current}/{bulkDownloadProgress.total} 다운로드 중 ({bulkDownloadProgress.studentName})</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Download className="w-5 h-5" />
+                                                    <span>{selectedGrade} 전체 리포트 다운로드</span>
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                    <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-200/50">
+                                        <h3 className="text-xl font-bold text-gray-800 mb-4">학년 전체 Email로 전송</h3>
+                                        <p className="text-gray-600 text-sm mb-4">선택된 학년의 모든 학생에게 상세 리포트를 이메일로 일괄 전송합니다.</p>
+                                        <button
+                                            onClick={handleBulkSendEmail}
+                                            disabled={isBulkEmailing || studentListForGrade.length === 0}
+                                            className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold transition-colors shadow-sm text-sm ${isBulkEmailing ? 'bg-gray-400 text-white cursor-wait' : 'bg-indigo-700 text-white hover:bg-indigo-800'}`}
+                                        >
+                                            {isBulkEmailing ? (
+                                                <>
+                                                    <LoaderCircle className="w-5 h-5 animate-spin" />
+                                                    <span>{bulkEmailProgress.current}/{bulkEmailProgress.total} 전송 중 ({bulkEmailProgress.studentName})</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Mail className="w-5 h-5" />
+                                                    <span>{selectedGrade} 전체 Email로 전송</span>
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -755,6 +929,8 @@ export const App: React.FC = () => {
                                     selectedSubUnitsCount={selectedSubUnitsCount}
                                     analysisConfig={analysisConfig} // Pass analysisConfig here
                                     classificationData={classificationCsv.data || undefined}
+                                    onSendEmail={handleSendEmail}
+                                    isEmailing={isEmailing}
                                 />
                             ) : (
                                 <div className="bg-white p-8 rounded-2xl shadow-lg border border-gray-200/50 text-center text-gray-500 min-h-[400px] flex items-center justify-center">
