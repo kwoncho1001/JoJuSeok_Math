@@ -74,7 +74,7 @@ export const App: React.FC = () => {
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState({ current: 0, total: 0, studentName: '' });
   const [isBulkEmailing, setIsBulkEmailing] = useState(false);
   const [bulkEmailProgress, setBulkEmailProgress] = useState({ current: 0, total: 0, studentName: '' });
-  const [isEmailing, setIsEmailing] = useState(false);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
 
   useEffect(() => {
     try {
@@ -156,82 +156,73 @@ export const App: React.FC = () => {
     return finalMap;
   }, [newProgressMaster, studentResponse.data]);
 
-  // 1. 학생별 상태(활성/비활성) 및 대표 이메일 산출
+  // 1. 학생별 활성 상태(최근 5개 시험 기준) 및 이메일 오타 교정 로직
   const studentStatusMap = useMemo(() => {
-    const result = new Map<string, StudentMetadata>();
-    if (!studentResponse.data) return result;
+    const statusMap = new Map<string, { isActive: boolean; email: string }>();
+    if (!studentResponse.data) return statusMap;
 
-    // 학년별 시험 정보 수집 (최근 5개 시험 추출용)
+    // 학년별 최근 5개 시험 ID 세트 구축
     const gradeExams = new Map<string, { id: string; ts: number }[]>();
-    const studentLogsByName = new Map<string, StudentResponseRaw[]>();
-
     studentResponse.data.forEach(res => {
-      const name = String(res['이름'] || '').trim();
-      const grade = (res['학년'] ? String(res['학년']).trim() : '') || '미지정';
-      const examId = String(res['시험 ID'] || res['시험ID'] || '').trim();
+      const grade = (res['학년'] || '미지정').toString().trim();
+      const examId = (res['시험 ID'] || res['시험ID'] || '').toString().trim();
       const ts = new Date(res['타임스탬프']).getTime();
-
-      if (name) {
-        if (!studentLogsByName.has(name)) studentLogsByName.set(name, []);
-        studentLogsByName.get(name)!.push(res);
-      }
-
-      if (examId && grade) {
-        if (!gradeExams.has(grade)) gradeExams.set(grade, []);
-        const exams = gradeExams.get(grade)!;
-        if (!exams.find(e => e.id === examId)) {
-          exams.push({ id: examId, ts });
-        } else {
-          const existing = exams.find(e => e.id === examId)!;
-          if (ts > existing.ts) existing.ts = ts;
-        }
-      }
+      if (!gradeExams.has(grade)) gradeExams.set(grade, []);
+      const exams = gradeExams.get(grade)!;
+      if (!exams.find(e => e.id === examId)) exams.push({ id: examId, ts });
     });
 
-    // 학년별 최근 5개 시험 ID Set 생성
     const recentTestsByGrade = new Map<string, Set<string>>();
     gradeExams.forEach((exams, grade) => {
       const top5 = exams.sort((a, b) => b.ts - a.ts).slice(0, 5).map(e => e.id);
       recentTestsByGrade.set(grade, new Set(top5));
     });
 
-    // 모든 학생에 대해 로직 적용
-    studentLogsByName.forEach((responses, name) => {
-      // A. 활성 여부 판단: 해당 학년의 최근 5개 시험 중 하나라도 응시했는가?
-      const latestRes = responses.sort((a, b) => new Date(b['타임스탬프']).getTime() - new Date(a['타임스탬프']).getTime())[0];
-      const grade = (latestRes['학년'] ? String(latestRes['학년']).trim() : '') || '미지정';
-      const recent5 = recentTestsByGrade.get(grade);
+    // 학생별 로그 그룹화
+    const studentLogs = new Map<string, any[]>();
+    studentResponse.data.forEach(res => {
+      const name = res['이름']?.toString().trim();
+      if (name) {
+        if (!studentLogs.has(name)) studentLogs.set(name, []);
+        studentLogs.get(name)!.push(res);
+      }
+    });
+
+    // 최종 상태 결정
+    studentLogs.forEach((logs, name) => {
+      const sortedLogs = logs.sort((a, b) => new Date(b['타임스탬프']).getTime() - new Date(a['타임스탬프']).getTime());
+      const latestGrade = (sortedLogs[0]['학년'] || '미지정').toString().trim();
+      const recent5Ids = recentTestsByGrade.get(latestGrade);
       
-      const isActive = responses.some(r => recent5?.has(String(r['시험 ID'] || r['시험ID']).trim()));
+      // 활성 기준: 해당 학년 최근 5개 시험 중 하나라도 응시했는가?
+      const isActive = logs.some(l => recent5Ids?.has((l['시험 ID'] || l['시험ID'] || '').toString().trim()));
 
-      // B. 이메일 오타 교정: 최근 5개 응답 중 가장 많이 나온 이메일 추출
-      const last5Emails = responses
-        .sort((a, b) => new Date(b['타임스탬프']).getTime() - new Date(a['타임스탬프']).getTime())
-        .slice(0, 5)
-        .map(r => String(r['이메일 주소'] || '').trim())
-        .filter(email => email !== '');
-
+      // 이메일 오타 교정: 최근 5개 응답 중 최다 빈출 주소 선택
       const emailFreq = new Map<string, number>();
-      last5Emails.forEach(e => emailFreq.set(e, (emailFreq.get(e) || 0) + 1));
+      sortedLogs.slice(0, 5).forEach(l => {
+        const email = (l['이메일 주소'] || '').toString().trim();
+        if (email) emailFreq.set(email, (emailFreq.get(email) || 0) + 1);
+      });
       
-      let canonicalEmail = '';
+      let canonicalEmail = "";
       let maxFreq = 0;
       emailFreq.forEach((freq, email) => {
         if (freq > maxFreq) { maxFreq = freq; canonicalEmail = email; }
       });
 
-      result.set(name, { isActive, canonicalEmail });
+      statusMap.set(name, { isActive, email: canonicalEmail });
     });
 
-    return result;
+    return statusMap;
   }, [studentResponse.data]);
 
   const gradeList = useMemo(() => Array.from(gradeStudentMap.keys()).sort(), [gradeStudentMap]);
+  
+  // 2. 탭에 따른 학생 리스트 필터링 (상세 리포트에서는 활성 학생만 표시)
   const studentListForGrade = useMemo(() => {
     if (!selectedGrade) return [];
     const allStudents = gradeStudentMap.get(selectedGrade) || [];
     
-    // 상세 리포트 탭('report')인 경우 활성 학생만 필터링
     if (analyzerTab === 'report') {
       return allStudents.filter(name => studentStatusMap.get(name)?.isActive === true);
     }
@@ -624,7 +615,7 @@ export const App: React.FC = () => {
         setBulkEmailProgress({ current: i + 1, total: studentListForGrade.length, studentName: student });
         
         const studentInfo = studentStatusMap.get(student);
-        if (!studentInfo?.canonicalEmail) {
+        if (!studentInfo?.email) {
              console.warn(`Skipping email for ${student}: No valid email found.`);
              continue;
         }
@@ -632,7 +623,7 @@ export const App: React.FC = () => {
         try {
             // Simulate email sending process
             // In a real app, you would generate the PDF blob here and send it to the backend
-            console.log(`Sending email to ${student} (${studentInfo.canonicalEmail})...`);
+            console.log(`Sending email to ${student} (${studentInfo.email})...`);
             await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err as any);
@@ -646,31 +637,39 @@ export const App: React.FC = () => {
     alert('학년 전체 이메일 전송 완료 (이메일이 없는 학생 제외)');
   }, [selectedGrade, studentListForGrade, studentStatusMap]);
 
+  // 3. 이메일 전송 처리 함수
   const handleSendEmail = async () => {
     if (!selectedStudent) return;
-    const studentInfo = studentStatusMap.get(selectedStudent);
-    if (!studentInfo?.canonicalEmail) {
+    const info = studentStatusMap.get(selectedStudent);
+    if (!info?.email) {
       alert("해당 학생의 유효한 이메일 주소를 찾을 수 없습니다.");
       return;
     }
-  
-    setIsEmailing(true);
-    try {
-      // 실제 전송 로직 (예: Apps Script API 호출)
-      // 여기서는 PDF 생성 후 전송하는 흐름을 가정합니다.
-      console.log(`${selectedStudent}(${studentInfo.canonicalEmail})에게 리포트를 전송합니다.`);
-      
-      // 이 부분에 서버(Apps Script)로 PDF 데이터와 이메일을 보내는 fetch 로직을 추가하세요.
-      // await sendEmailWithAttachment(studentInfo.email, pdfBlob);
-      
-      // Simulate delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
 
-      alert(`${selectedStudent} 학생(${studentInfo.canonicalEmail})에게 이메일 전송이 완료되었습니다.`);
-    } catch (err) {
-      alert("이메일 전송 중 오류가 발생했습니다.");
+    setIsSendingEmail(true);
+    try {
+      const GAS_URL = 'https://script.google.com/macros/s/AKfycbzOJNeshDQcaixH3adTHVSTopO5_Q6oKnANW-0xjSx2rLqM1fqNRBTFfzXK-pMQHTOW/exec';
+      
+      const response = await fetch(GAS_URL, {
+        method: 'POST',
+        body: JSON.stringify({
+          email: info.email,
+          studentName: selectedStudent,
+          subject: `[학원] ${selectedStudent} 학생 성취도 분석 리포트`,
+          message: `${selectedStudent} 학생의 상세 분석 데이터가 업데이트되었습니다. 시스템에서 리포트를 확인하세요.`
+        })
+      });
+
+      const result = await response.json();
+      if (result.status === 'success') {
+        alert(`${selectedStudent} 학생(${info.email})에게 메일을 보냈습니다.`);
+      } else {
+        throw new Error(result.message);
+      }
+    } catch (err: any) {
+      alert("메일 전송 실패: " + err.message);
     } finally {
-      setIsEmailing(false);
+      setIsSendingEmail(false);
     }
   };
 
@@ -930,7 +929,7 @@ export const App: React.FC = () => {
                                     analysisConfig={analysisConfig} // Pass analysisConfig here
                                     classificationData={classificationCsv.data || undefined}
                                     onSendEmail={handleSendEmail}
-                                    isEmailing={isEmailing}
+                                    isEmailing={isSendingEmail}
                                 />
                             ) : (
                                 <div className="bg-white p-8 rounded-2xl shadow-lg border border-gray-200/50 text-center text-gray-500 min-h-[400px] flex items-center justify-center">

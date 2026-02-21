@@ -113,5 +113,5 @@ export interface AnalysisConfig {
 
 export interface StudentMetadata {
   isActive: boolean;
-  canonicalEmail: string;
+  email: string;
 }
