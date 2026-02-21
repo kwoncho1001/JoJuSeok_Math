@@ -483,7 +483,7 @@ export const App: React.FC = () => {
 
     // Wait for fonts and animations to settle
     if (document.fonts) await document.fonts.ready;
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 500)); // 시간을 0.5초로 단축
 
     try {
         const pdf = new jsPDF('p', 'mm', 'a4');
@@ -494,13 +494,14 @@ export const App: React.FC = () => {
         // Header Capture
         const headerElement = reportElement.querySelector('[data-pdf-header]') as HTMLElement;
         const headerCanvas = await html2canvas(headerElement, {
-            scale: 2,
+            scale: 1.5, // 선명도 조정 (2 -> 1.5)
             useCORS: true,
             backgroundColor: '#ffffff',
             foreignObjectRendering: false,
+            logging: false, // 로깅 비활성화
             // Removed windowWidth here, relying on CSS for overall width
         });
-        const headerImgData = headerCanvas.toDataURL('image/jpeg', 0.8);
+        const headerImgData = headerCanvas.toDataURL('image/jpeg', 0.7); // 품질 조정 (0.8 -> 0.7)
         const headerHeight = (headerCanvas.height * contentWidth) / headerCanvas.width;
 
         // Sectional Capture
@@ -510,14 +511,15 @@ export const App: React.FC = () => {
         for (let i = 0; i < sections.length; i++) {
             const section = sections[i];
             const canvas = await html2canvas(section, {
-                scale: 2,
+                scale: 1.5, // 선명도 조정 (2 -> 1.5)
                 useCORS: true,
                 backgroundColor: '#ffffff',
                 // Removed windowWidth here, relying on CSS for overall width
-                foreignObjectRendering: false
+                foreignObjectRendering: false,
+                logging: false // 로깅 비활성화
             });
 
-            const imgData = canvas.toDataURL('image/jpeg', 0.8);
+            const imgData = canvas.toDataURL('image/jpeg', 0.7); // 품질 조정 (0.8 -> 0.7)
             const imgHeight = (canvas.height * contentWidth) / canvas.width;
 
             // Page break check (header space considered)

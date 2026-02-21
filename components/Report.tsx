@@ -419,7 +419,7 @@ export const Report: React.FC<ReportProps> = ({
 
         // 폰트 및 이미지 로딩 완벽 대기
         if (document.fonts) await document.fonts.ready;
-        await new Promise(resolve => setTimeout(resolve, 1500)); // 시간을 1.5초로 늘림
+        await new Promise(resolve => setTimeout(resolve, 500)); // 시간을 0.5초로 단축
 
         try {
             const pdf = new jsPDF('p', 'mm', 'a4');
@@ -430,15 +430,15 @@ export const Report: React.FC<ReportProps> = ({
             // 3. 머리글(Header) 캡처
             const headerElement = reportElement.querySelector('[data-pdf-header]') as HTMLElement;
             const headerCanvas = await html2canvas(headerElement, {
-                scale: 2, // 선명도 확보
+                scale: 1.5, // 선명도 조정 (2 -> 1.5)
                 useCORS: true,
                 backgroundColor: '#ffffff',
                 foreignObjectRendering: false, // 검은 박스 방지 핵심 설정
-                logging: true,
+                logging: false, // 로깅 비활성화
                 fontEmbedCSS: true // 폰트 포함 설정 추가
                 // Removed windowWidth: 900, relying on CSS for overall width
             });
-            const headerImgData = headerCanvas.toDataURL('image/jpeg', 0.8);
+            const headerImgData = headerCanvas.toDataURL('image/jpeg', 0.7); // 품질 조정 (0.8 -> 0.7)
             const headerHeight = (headerCanvas.height * contentWidth) / headerCanvas.width; // Corrected height calculation
 
             // 4. 섹션별 순차 캡처 (요소가 잘리지 않도록 섹션 단위로 처리)
@@ -448,16 +448,16 @@ export const Report: React.FC<ReportProps> = ({
             for (let i = 0; i < sections.length; i++) {
                 const section = sections[i];
                 const canvas = await html2canvas(section, {
-                    scale: 2,
+                    scale: 1.5, // 선명도 조정 (2 -> 1.5)
                     useCORS: true,
                     backgroundColor: '#ffffff',
                     // Removed windowWidth: 900, relying on CSS for overall width
                     foreignObjectRendering: false,
-                    logging: true,
+                    logging: false, // 로깅 비활성화
                     fontEmbedCSS: true // 폰트 포함 설정 추가
                 });
 
-                const imgData = canvas.toDataURL('image/jpeg', 0.8);
+                const imgData = canvas.toDataURL('image/jpeg', 0.7); // 품질 조정 (0.8 -> 0.7)
                 const imgHeight = (canvas.height * contentWidth) / canvas.width;
 
                 // 페이지 넘김 처리 (머리글 공간 확보)
@@ -672,8 +672,8 @@ export const Report: React.FC<ReportProps> = ({
                                                                         const displayScore = progress.DisplayScore != null ? progress.DisplayScore : -1;
                                                                         
                                                                         return (
-                                                                            <div key={type} className="p-8 bg-white rounded-[2rem] border border-slate-100 shadow-lg hover:shadow-2xl transition-all group border-b-4 border-b-transparent hover:border-b-indigo-500">
-                                                                                <div className="flex items-start justify-between mb-6">
+                                                                            <div key={type} className="p-8 bg-white rounded-[2rem] border border-gray-300 shadow-lg hover:shadow-2xl transition-all group border-b-4 border-b-transparent hover:border-b-indigo-500">
+                                                                                <div className="flex items-start justify-between mb-6 gap-4">
                                                                                     <div className="space-y-1">
                                                                                         <p className="font-black text-slate-800 text-xl leading-snug group-hover:text-indigo-600 transition-colors min-h-[3.5rem] flex items-center">
                                                                                             <LatexRenderer text={type} />
