@@ -656,23 +656,26 @@ export const App: React.FC = () => {
 
     setIsSendingEmail(true);
     try {
-      const GAS_URL = 'https://script.google.com/macros/s/AKfycbzOJNeshDQcaixH3adTHVSTopO5_Q6oKnANW-0xjSx2rLqM1fqNRBTFfzXK-pMQHTOW/exec';
+      // Use the correct URL from constants
+      const GAS_URL = STUDENT_RESPONSE_URL;
       
+      // 이 부분이 핵심입니다: headers와 redirect 설정을 추가해야 합니다.
       const response = await fetch(GAS_URL, {
         method: 'POST',
+        mode: 'cors', // CORS 모드 명시
         headers: {
-          'Content-Type': 'text/plain', // 이 부분을 추가하여 CORS Preflight를 피합니다
+          'Content-Type': 'text/plain', // 핵심: 브라우저의 사전 검사(Preflight)를 피하기 위해 필수
         },
         body: JSON.stringify({
           email: info.email,
           studentName: selectedStudent,
           subject: `[학원] ${selectedStudent} 학생 성취도 분석 리포트`,
           message: `${selectedStudent} 학생의 상세 분석 데이터가 업데이트되었습니다. 시스템에서 리포트를 확인하세요.`
-        })
+        }),
+        redirect: 'follow' // GAS의 302 리다이렉트를 따라가도록 설정
       });
 
-      // fetch가 성공하더라도 GAS에서 리다이렉트(302)가 발생하므로 
-      // 응답 처리에 주의가 필요할 수 있으나, 기본적으로 아래와 같이 처리합니다.
+      // 응답 처리
       const result = await response.json();
       if (result.status === 'success') {
         alert(`${selectedStudent} 학생(${info.email})에게 메일을 보냈습니다.`);
@@ -680,7 +683,8 @@ export const App: React.FC = () => {
         throw new Error(result.message);
       }
     } catch (err: any) {
-      // CORS 문제 발생 시 이 catch 블록에서 "Failed to fetch"가 잡힙니다.
+      // 여전히 에러가 난다면 콘솔에서 상세 내용을 확인해야 합니다.
+      console.error("Fetch Error Detail:", err);
       alert("메일 전송 실패: " + err.message);
     } finally {
       setIsSendingEmail(false);
