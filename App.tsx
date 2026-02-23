@@ -579,27 +579,42 @@ export const App: React.FC = () => {
     setBulkDownloadProgress({ current: 0, total: studentListForGrade.length, studentName: '' });
     setError(null);
 
-    for (let i = 0; i < studentListForGrade.length; i++) {
-        const student = studentListForGrade[i];
-        setBulkDownloadProgress({ current: i + 1, total: studentListForGrade.length, studentName: student });
-        try {
-            const studentAvailableSubjects = newProgressMaster
-                .filter(p => p.StudentID === student)
-                .map(p => detailTypeToSubjectMap.get(p.DetailType))
-                .filter((s): s is string => s !== undefined)
-                .filter((value, index, self) => self.indexOf(value) === index)
-                .sort();
+    const CHUNK_SIZE = 3;
 
-            const subjectForReport = studentAvailableSubjects.length > 0 ? studentAvailableSubjects[0] : (SUBJECTS[0] || '미지정');
-            
-            await generateAndSavePdfForStudent(student, subjectForReport);
+    for (let i = 0; i < studentListForGrade.length; i += CHUNK_SIZE) {
+        const chunk = studentListForGrade.slice(i, i + CHUNK_SIZE);
+        
+        // Update progress
+        // Show the name of the first student in the chunk or joined names
+        const currentProgress = Math.min(i + chunk.length, studentListForGrade.length);
+        setBulkDownloadProgress({ 
+            current: currentProgress, 
+            total: studentListForGrade.length, 
+            studentName: chunk.join(', ') 
+        });
+
+        await Promise.all(chunk.map(async (student) => {
+            try {
+                const studentAvailableSubjects = newProgressMaster
+                    .filter(p => p.StudentID === student)
+                    .map(p => detailTypeToSubjectMap.get(p.DetailType))
+                    .filter((s): s is string => s !== undefined)
+                    .filter((value, index, self) => self.indexOf(value) === index)
+                    .sort();
+
+                const subjectForReport = studentAvailableSubjects.length > 0 ? studentAvailableSubjects[0] : (SUBJECTS[0] || '미지정');
+                
+                await generateAndSavePdfForStudent(student, subjectForReport);
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err as any);
+                console.error(`Failed to download report for ${student}: ${message}`);
+                // In chunk mode, we log errors but don't stop or delay significantly to maintain speed
+            }
+        }));
+
+        // Delay between chunks to let browser breathe
+        if (i + CHUNK_SIZE < studentListForGrade.length) {
             await new Promise(resolve => setTimeout(resolve, 500));
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err as any);
-            console.error(`Failed to download report for ${student}: ${message}`);
-            setError(`'${student}' 학생의 리포트 다운로드 중 오류 발생: ${message}. 다음 학생으로 넘어갑니다.`);
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            setError(null);
         }
     }
 

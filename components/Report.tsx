@@ -156,27 +156,18 @@ const getMasteryLevel = (score: number): string => {
     return 'Master';
 };
 
+const normalizeString = (str: string | number | undefined): string => {
+  return String(str || '').replace(/[\[\]]/g, '').trim();
+}
+
 const MetricGrid: React.FC<{ metrics: Record<string, string | number> }> = ({ metrics }) => (
   <div className="grid grid-cols-4 gap-2 mt-4 text-center">
     {Object.entries(metrics).map(([key, value]) => {
-      let displayValue: string | number = value;
-      let isDataMissing = false;
-
-      if (key === '상 난이도' || key === '중 난이도' || key === '하 난이도') {
-        const numValue = parseFloat(String(value));
-        if (numValue < 0) {
-          displayValue = '데이터 부족';
-          isDataMissing = true;
-        } else {
-          displayValue = numValue.toFixed(1);
-        }
-      }
-
       return (
         <div key={key} className="bg-slate-50 p-2 rounded-lg border border-slate-100 shadow-sm">
           <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tight mb-1">{key}</div>
-          <div className={`font-bold text-slate-700 ${isDataMissing ? 'text-xs' : 'text-sm'}`}>
-            {displayValue}
+          <div className="font-bold text-slate-700 text-sm">
+            {value}
           </div>
         </div>
       );
@@ -233,6 +224,58 @@ export const Report: React.FC<ReportProps> = ({
         studentProgress.forEach(item => map.set(item.DetailType, item));
         return map;
     }, [studentProgress]);
+
+    const detailTypeStatsMap = useMemo(() => {
+        const map = new Map<string, {
+            total: { correct: number, total: number },
+            high: { correct: number, total: number },
+            mid: { correct: number, total: number },
+            low: { correct: number, total: number }
+        }>();
+
+        const qMap = new Map<string, { difficulty: string, detailType: string }>();
+        questionDb.forEach(q => {
+             const examId = normalizeString(q['시험 ID/교재명'] || q['시험 ID'] || q['시험ID']);
+             const subject = normalizeString(q['과목'] || q['과목명']);
+             const key = `${subject}|${examId}-${q['번호']}`;
+             qMap.set(key, { difficulty: q['난이도'], detailType: q['세부 유형'] });
+        });
+
+        studentLog.forEach(log => {
+            // log.ExamID is already "Subject|ExamID"
+            const key = `${log.ExamID}-${log.QuestionNum}`;
+            const qInfo = qMap.get(key);
+            if (qInfo) {
+                const { difficulty, detailType } = qInfo;
+                if (!map.has(detailType)) {
+                    map.set(detailType, {
+                        total: { correct: 0, total: 0 },
+                        high: { correct: 0, total: 0 },
+                        mid: { correct: 0, total: 0 },
+                        low: { correct: 0, total: 0 }
+                    });
+                }
+                const stats = map.get(detailType)!;
+                const isCorrect = log.Result === 'O';
+                
+                stats.total.total++;
+                if (isCorrect) stats.total.correct++;
+
+                if (difficulty === '상') {
+                    stats.high.total++;
+                    if (isCorrect) stats.high.correct++;
+                } else if (difficulty === '중') {
+                    stats.mid.total++;
+                    if (isCorrect) stats.mid.correct++;
+                } else if (difficulty === '하') {
+                    stats.low.total++;
+                    if (isCorrect) stats.low.correct++;
+                }
+            }
+        });
+
+        return map;
+    }, [studentLog, questionDb]);
     
     const groupedData = useMemo(() => {
         const root = new Map<string, Map<string, Map<string, string[]>>>();
@@ -671,6 +714,13 @@ export const Report: React.FC<ReportProps> = ({
                                                                         if (!progress) return null;
                                                                         const displayScore = progress.DisplayScore != null ? progress.DisplayScore : -1;
                                                                         
+                                                                        const stats = detailTypeStatsMap.get(type) || {
+                                                                            total: { correct: 0, total: 0 },
+                                                                            high: { correct: 0, total: 0 },
+                                                                            mid: { correct: 0, total: 0 },
+                                                                            low: { correct: 0, total: 0 }
+                                                                        };
+
                                                                         return (
                                                                             <div key={type} className="p-8 bg-white rounded-[2rem] border border-gray-300 shadow-lg hover:shadow-2xl transition-all group border-b-4 border-b-transparent hover:border-b-indigo-500">
                                                                                 <div className="flex items-start justify-between mb-6 gap-4">
@@ -693,10 +743,10 @@ export const Report: React.FC<ReportProps> = ({
                                                                                 </div>
                                                                                 
                                                                                 <MetricGrid metrics={{
-                                                                                    "총 풀이": progress.Total_Attempts,
-                                                                                    "하 난이도": progress.Score_Low,
-                                                                                    "중 난이도": progress.Score_Mid,
-                                                                                    "상 난이도": progress.Score_High,
+                                                                                    "전체 문제 정답율": `${stats.total.correct}/${stats.total.total}`,
+                                                                                    "하 문제 정답율": `${stats.low.correct}/${stats.low.total}`,
+                                                                                    "중 문제 정답율": `${stats.mid.correct}/${stats.mid.total}`,
+                                                                                    "상 문제 정답율": `${stats.high.correct}/${stats.high.total}`,
                                                                                 }}/>
                                                                             </div>
                                                                         );
