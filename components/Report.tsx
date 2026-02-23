@@ -241,41 +241,69 @@ export const Report: React.FC<ReportProps> = ({
              qMap.set(key, { difficulty: q['난이도'], detailType: q['세부 유형'] });
         });
 
+        // Group logs by detailType first
+        const logsByDetailType = new Map<string, TransactionLogItem[]>();
         studentLog.forEach(log => {
-            // log.ExamID is already "Subject|ExamID"
             const key = `${log.ExamID}-${log.QuestionNum}`;
             const qInfo = qMap.get(key);
             if (qInfo) {
-                const { difficulty, detailType } = qInfo;
-                if (!map.has(detailType)) {
-                    map.set(detailType, {
-                        total: { correct: 0, total: 0 },
-                        high: { correct: 0, total: 0 },
-                        mid: { correct: 0, total: 0 },
-                        low: { correct: 0, total: 0 }
-                    });
+                const { detailType } = qInfo;
+                if (!logsByDetailType.has(detailType)) {
+                    logsByDetailType.set(detailType, []);
                 }
-                const stats = map.get(detailType)!;
-                const isCorrect = log.Result === 'O';
-                
-                stats.total.total++;
-                if (isCorrect) stats.total.correct++;
-
-                if (difficulty === '상') {
-                    stats.high.total++;
-                    if (isCorrect) stats.high.correct++;
-                } else if (difficulty === '중') {
-                    stats.mid.total++;
-                    if (isCorrect) stats.mid.correct++;
-                } else if (difficulty === '하') {
-                    stats.low.total++;
-                    if (isCorrect) stats.low.correct++;
-                }
+                logsByDetailType.get(detailType)!.push(log);
             }
         });
 
+        // Process each detailType with recent count logic
+        logsByDetailType.forEach((logs, detailType) => {
+            // Separate by Type and sort by Date descending
+            const testLogs = logs.filter(l => l.Type === 'Test').sort((a, b) => new Date(b.Date).getTime() - new Date(a.Date).getTime());
+            const bookLogs = logs.filter(l => l.Type === 'Book').sort((a, b) => new Date(b.Date).getTime() - new Date(a.Date).getTime());
+
+            // Take recent N items for each type
+            const recentCount = analysisConfig.recentCount || 5;
+            const recentTestLogs = testLogs.slice(0, recentCount);
+            const recentBookLogs = bookLogs.slice(0, recentCount);
+
+            // Combine selected logs
+            const targetLogs = [...recentTestLogs, ...recentBookLogs];
+
+            const stats = {
+                total: { correct: 0, total: 0 },
+                high: { correct: 0, total: 0 },
+                mid: { correct: 0, total: 0 },
+                low: { correct: 0, total: 0 }
+            };
+
+            targetLogs.forEach(log => {
+                const key = `${log.ExamID}-${log.QuestionNum}`;
+                const qInfo = qMap.get(key);
+                if (qInfo) {
+                    const { difficulty } = qInfo;
+                    const isCorrect = log.Result === 'O';
+                    
+                    stats.total.total++;
+                    if (isCorrect) stats.total.correct++;
+
+                    if (difficulty === '상') {
+                        stats.high.total++;
+                        if (isCorrect) stats.high.correct++;
+                    } else if (difficulty === '중') {
+                        stats.mid.total++;
+                        if (isCorrect) stats.mid.correct++;
+                    } else if (difficulty === '하') {
+                        stats.low.total++;
+                        if (isCorrect) stats.low.correct++;
+                    }
+                }
+            });
+
+            map.set(detailType, stats);
+        });
+
         return map;
-    }, [studentLog, questionDb]);
+    }, [studentLog, questionDb, analysisConfig]);
     
     const groupedData = useMemo(() => {
         const root = new Map<string, Map<string, Map<string, string[]>>>();
