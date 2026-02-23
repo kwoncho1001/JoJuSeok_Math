@@ -101,6 +101,13 @@ export const processStudentData = (
       return answers;
   };
 
+  const determineType = (id: string, defaultType: 'Test' | 'Book'): 'Test' | 'Book' => {
+      const upperId = id.toUpperCase();
+      if (upperId.startsWith('E')) return 'Test';
+      if (upperId.startsWith('B')) return 'Book';
+      return defaultType;
+  };
+
   // 1. Process Test Responses (Type: 'Test')
   for (const response of studentResponses) {
     const studentId = normalizeString(response['이름'] || response['이메일 주소'] || 'Unknown');
@@ -117,6 +124,7 @@ export const processStudentData = (
     if (questionsForThisExamUnfiltered.length === 0) continue;
 
     const subjectForExam = normalizeString(questionsForThisExamUnfiltered[0]['과목'] || questionsForThisExamUnfiltered[0]['과목명']);
+    const type = determineType(examId, 'Test');
 
     for (const [questionNum, studentAnswerRaw] of studentAnswers.entries()) {
         const questionInfo = questionsForThisExamUnfiltered.find(q => q['번호'] === questionNum);
@@ -134,7 +142,7 @@ export const processStudentData = (
         
         newlyGeneratedLogs.push({
             Date: timestamp, StudentID: studentId, ExamID: `${subjectForExam}|${examId}`, QuestionNum: questionNum, // Store examID with subject
-            Result: isCorrect ? 'O' : 'X', Type: 'Test',
+            Result: isCorrect ? 'O' : 'X', Type: type,
             Weight: parseFloat(weight.toFixed(4)), Score: parseFloat(score.toFixed(4)),
         });
         existingRecords.add(recordKey);
@@ -162,6 +170,7 @@ export const processStudentData = (
 
     if (questionsForThisBook.length === 0) continue;
     const bookQuestionMap = new Map(questionsForThisBook.map(q => [q['번호'], q]));
+    const type = determineType(textbookName, 'Book');
 
     for (const [relativeNum, studentAnswerRaw] of studentAnswers.entries()) {
         const absoluteQuestionNum = startNumber + relativeNum - 1;
@@ -180,7 +189,7 @@ export const processStudentData = (
 
         newlyGeneratedLogs.push({
             Date: timestamp, StudentID: studentId, ExamID: `${subjectName}|${textbookName}`, QuestionNum: absoluteQuestionNum, // Store examID with subject
-            Result: isCorrect ? 'O' : 'X', Type: 'Book',
+            Result: isCorrect ? 'O' : 'X', Type: type,
             Weight: parseFloat(weight.toFixed(4)), Score: parseFloat(score.toFixed(4)),
         });
         existingRecords.add(recordKey);
@@ -275,25 +284,33 @@ export const processStudentData = (
 
       const processDifficulty = (logs: (TransactionLogItem & { 난이도: '상' | '중' | '하' })[]) => {
           if (logs.length === 0) return -1; // No data for this difficulty
-          const testLogs = logs.filter(l => l.Type === 'Test');
           
-          if (testLogs.length < config.minTestCount) {
+          // Check for minimum data requirements (Total count check)
+          if (logs.length < config.minTestCount) {
             return -1;
           }
 
+          const testLogs = logs.filter(l => l.Type === 'Test');
           const bookLogs = logs.filter(l => l.Type === 'Book');
           
-          const testIndex = calculateDifficultyIndex(testLogs);
-          const hasBookData = bookLogs.length > 0;
+          const hasTest = testLogs.length > 0;
+          const hasBook = bookLogs.length > 0;
           
-          let finalIndex = 0;
-          if (hasBookData) {
-              const bookIndex = calculateDifficultyIndex(bookLogs);
-              finalIndex = (testIndex * 0.7) + (bookIndex * 0.3);
-          } else {
-              finalIndex = testIndex;
+          let testIndex = 0;
+          let bookIndex = 0;
+
+          if (hasTest) testIndex = calculateDifficultyIndex(testLogs);
+          if (hasBook) bookIndex = calculateDifficultyIndex(bookLogs);
+          
+          if (hasTest && hasBook) {
+              return ((testIndex * 0.7) + (bookIndex * 0.3)) * 50 + 50;
+          } else if (hasTest) {
+              return testIndex * 50 + 50;
+          } else if (hasBook) {
+              return bookIndex * 50 + 50;
           }
-          return (finalIndex * 50) + 50;
+          
+          return -1;
       };
 
       const scoreHigh = processDifficulty(highLogs);
