@@ -771,7 +771,7 @@ export const Report: React.FC<ReportProps> = ({
                                                                                 </div>
                                                                                 
                                                                                 <MetricGrid metrics={{
-                                                                                    "전체 문제 정답율": `${stats.total.correct}/${stats.total.total}`,
+                                                                                    "전체 정답율": `${stats.total.correct}/${stats.total.total}`,
                                                                                     "하 문제 정답율": `${stats.low.correct}/${stats.low.total}`,
                                                                                     "중 문제 정답율": `${stats.mid.correct}/${stats.mid.total}`,
                                                                                     "상 문제 정답율": `${stats.high.correct}/${stats.high.total}`,

@@ -1,7 +1,7 @@
 
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { FileUp, BookCheck, History, Trophy, FileSpreadsheet, FileText, XCircle, CheckCircle2, LoaderCircle, Sparkles, LayoutDashboard, Microscope, Database, FileCode2, Users, ListChecks, TrendingUp, Calculator, RefreshCw, DatabaseZap, BrainCircuit, Download, Mail } from 'lucide-react';
+import { FileUp, BookCheck, History, Trophy, FileSpreadsheet, FileText, XCircle, CheckCircle2, LoaderCircle, Sparkles, LayoutDashboard, Microscope, Database, FileCode2, Users, ListChecks, TrendingUp, Calculator, RefreshCw, DatabaseZap, BrainCircuit, Download, Mail, CheckSquare, Square } from 'lucide-react';
 import ReactDOM from 'react-dom/client';
 import { FileUpload } from './components/FileUpload';
 import { ResultCard } from './components/ResultCard';
@@ -75,6 +75,7 @@ export const App: React.FC = () => {
   const [isBulkEmailing, setIsBulkEmailing] = useState(false);
   const [bulkEmailProgress, setBulkEmailProgress] = useState({ current: 0, total: 0, studentName: '' });
   const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [bulkSelectedStudents, setBulkSelectedStudents] = useState<string[]>([]);
 
   useEffect(() => {
     try {
@@ -229,6 +230,10 @@ export const App: React.FC = () => {
     
     return allStudents;
   }, [selectedGrade, gradeStudentMap, analyzerTab, studentStatusMap]);
+
+  useEffect(() => {
+    setBulkSelectedStudents(studentListForGrade);
+  }, [studentListForGrade]);
 
   const handleGradeSelect = (grade: string | null) => {
       setSelectedGrade(grade);
@@ -570,26 +575,26 @@ export const App: React.FC = () => {
 
 
   const handleBulkDownloadReports = useCallback(async () => {
-    if (!selectedGrade || studentListForGrade.length === 0) {
-        setError('학년을 선택하거나, 해당 학년에 학생 데이터가 없습니다.');
+    if (!selectedGrade || bulkSelectedStudents.length === 0) {
+        setError('학년을 선택하거나, 다운로드할 학생을 선택해주세요.');
         return;
     }
 
     setIsBulkDownloading(true);
-    setBulkDownloadProgress({ current: 0, total: studentListForGrade.length, studentName: '' });
+    setBulkDownloadProgress({ current: 0, total: bulkSelectedStudents.length, studentName: '' });
     setError(null);
 
     const CHUNK_SIZE = 3;
 
-    for (let i = 0; i < studentListForGrade.length; i += CHUNK_SIZE) {
-        const chunk = studentListForGrade.slice(i, i + CHUNK_SIZE);
+    for (let i = 0; i < bulkSelectedStudents.length; i += CHUNK_SIZE) {
+        const chunk = bulkSelectedStudents.slice(i, i + CHUNK_SIZE);
         
         // Update progress
         // Show the name of the first student in the chunk or joined names
-        const currentProgress = Math.min(i + chunk.length, studentListForGrade.length);
+        const currentProgress = Math.min(i + chunk.length, bulkSelectedStudents.length);
         setBulkDownloadProgress({ 
             current: currentProgress, 
-            total: studentListForGrade.length, 
+            total: bulkSelectedStudents.length, 
             studentName: chunk.join(', ') 
         });
 
@@ -613,29 +618,29 @@ export const App: React.FC = () => {
         }));
 
         // Delay between chunks to let browser breathe
-        if (i + CHUNK_SIZE < studentListForGrade.length) {
+        if (i + CHUNK_SIZE < bulkSelectedStudents.length) {
             await new Promise(resolve => setTimeout(resolve, 500));
         }
     }
 
     setIsBulkDownloading(false);
     setBulkDownloadProgress({ current: 0, total: 0, studentName: '' });
-    alert('학년 전체 리포트 다운로드 완료 (오류가 발생한 학생 제외)');
-  }, [selectedGrade, studentListForGrade, generateAndSavePdfForStudent, newProgressMaster, detailTypeToSubjectMap]);
+    alert('선택된 학생들의 리포트 다운로드 완료 (오류가 발생한 학생 제외)');
+  }, [selectedGrade, bulkSelectedStudents, generateAndSavePdfForStudent, newProgressMaster, detailTypeToSubjectMap]);
 
   const handleBulkSendEmail = useCallback(async () => {
-    if (!selectedGrade || studentListForGrade.length === 0) {
-        setError('학년을 선택하거나, 해당 학년에 학생 데이터가 없습니다.');
+    if (!selectedGrade || bulkSelectedStudents.length === 0) {
+        setError('학년을 선택하거나, 이메일을 전송할 학생을 선택해주세요.');
         return;
     }
 
     setIsBulkEmailing(true);
-    setBulkEmailProgress({ current: 0, total: studentListForGrade.length, studentName: '' });
+    setBulkEmailProgress({ current: 0, total: bulkSelectedStudents.length, studentName: '' });
     setError(null);
 
-    for (let i = 0; i < studentListForGrade.length; i++) {
-        const student = studentListForGrade[i];
-        setBulkEmailProgress({ current: i + 1, total: studentListForGrade.length, studentName: student });
+    for (let i = 0; i < bulkSelectedStudents.length; i++) {
+        const student = bulkSelectedStudents[i];
+        setBulkEmailProgress({ current: i + 1, total: bulkSelectedStudents.length, studentName: student });
         
         const studentInfo = studentStatusMap.get(student);
         if (!studentInfo?.email) {
@@ -657,8 +662,8 @@ export const App: React.FC = () => {
 
     setIsBulkEmailing(false);
     setBulkEmailProgress({ current: 0, total: 0, studentName: '' });
-    alert('학년 전체 이메일 전송 완료 (이메일이 없는 학생 제외)');
-  }, [selectedGrade, studentListForGrade, studentStatusMap]);
+    alert('선택된 학생들에게 이메일 전송 완료 (이메일이 없는 학생 제외)');
+  }, [selectedGrade, bulkSelectedStudents, studentStatusMap]);
 
   // 3. 이메일 전송 처리 함수
   const handleSendEmail = async () => {
@@ -900,6 +905,57 @@ export const App: React.FC = () => {
                                     </div>
                                 )}
                             </div>
+
+                            {selectedGrade && studentListForGrade.length > 0 && (
+                                <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-200/50 space-y-4">
+                                    <div className="flex justify-between items-center border-b pb-2">
+                                        <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                                            <ListChecks className="w-5 h-5 text-indigo-500"/>
+                                            다운로드 대상 학생 선택
+                                        </h3>
+                                        <div className="flex gap-2">
+                                            <button 
+                                                onClick={() => setBulkSelectedStudents(studentListForGrade)} 
+                                                className="text-xs font-semibold text-indigo-600 hover:underline"
+                                            >
+                                                전체 선택
+                                            </button>
+                                            <button 
+                                                onClick={() => setBulkSelectedStudents([])} 
+                                                className="text-xs font-semibold text-indigo-600 hover:underline"
+                                            >
+                                                전체 해제
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="max-h-60 overflow-y-auto pr-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                                        {studentListForGrade.map(student => {
+                                            const isChecked = bulkSelectedStudents.includes(student);
+                                            return (
+                                                <label key={student} className="flex items-center gap-2 p-2 rounded-md hover:bg-gray-50 cursor-pointer border border-transparent hover:border-gray-200 transition-colors">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isChecked}
+                                                        onChange={() => {
+                                                            if (isChecked) {
+                                                                setBulkSelectedStudents(prev => prev.filter(s => s !== student));
+                                                            } else {
+                                                                setBulkSelectedStudents(prev => [...prev, student]);
+                                                            }
+                                                        }}
+                                                        className="hidden"
+                                                    />
+                                                    {isChecked ? <CheckSquare className="w-4 h-4 text-indigo-600 flex-shrink-0"/> : <Square className="w-4 h-4 text-gray-300 flex-shrink-0"/>}
+                                                    <span className={`text-sm truncate ${isChecked ? 'font-semibold text-gray-800' : 'text-gray-500'}`}>{student}</span>
+                                                </label>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="text-xs text-gray-500 text-right pt-2 border-t">
+                                        {bulkSelectedStudents.length} / {studentListForGrade.length}명 선택됨
+                                    </div>
+                                </div>
+                            )}
 
                             {selectedGrade && (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
