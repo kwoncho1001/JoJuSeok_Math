@@ -2,7 +2,7 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import type { QuestionDBItem, ProgressMasterItem, TransactionLogItem, AggregatedUnitData, ScoredStudent, AnalysisConfig, ClassificationCsvItem } from '../types';
-import { Download, LoaderCircle, Target, BarChart3, TrendingUp, Mail } from 'lucide-react';
+import { Download, LoaderCircle, Target, BarChart3, TrendingUp, Mail, Trophy } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { LatexRenderer } from './LatexRenderer'; // Fix: Corrected typo in import path
@@ -431,8 +431,115 @@ export const Report: React.FC<ReportProps> = ({
         return `${today.getFullYear()}년 ${today.getMonth() + 1}월 ${week}주차 - ${studentId} 유형 분석 보고서`;
     }, [studentId]);
 
+    const activityStats = useMemo(() => {
+        const now = new Date();
+        const studentLogs = transactionLog.filter(l => l.StudentID === studentId);
+        
+        // Calculate last 10 weeks
+        const weeks = [];
+        const currentWeekStart = new Date(now);
+        currentWeekStart.setDate(now.getDate() - now.getDay());
+        currentWeekStart.setHours(0, 0, 0, 0);
+
+        for (let i = 9; i >= 0; i--) {
+            const wStart = new Date(currentWeekStart);
+            wStart.setDate(currentWeekStart.getDate() - i * 7);
+            const wEnd = new Date(wStart);
+            wEnd.setDate(wStart.getDate() + 7);
+            
+            const logs = studentLogs.filter(l => {
+                const ld = new Date(l.Date);
+                return ld >= wStart && ld < wEnd;
+            });
+            
+            const month = wStart.getMonth() + 1;
+            const firstDayOfMonth = new Date(wStart.getFullYear(), wStart.getMonth(), 1).getDay();
+            const weekOfMonth = Math.ceil((wStart.getDate() + firstDayOfMonth) / 7);
+
+            weeks.push({
+                label: `${month}월 ${weekOfMonth}주`,
+                count: logs.length,
+                accuracy: logs.length > 0 ? (logs.filter(l => l.Result === 'O').length / logs.length) * 100 : 0
+            });
+        }
+    
+        return { weeks };
+    }, [transactionLog, studentId]);
+    
     // Removed AI summary related logic and effects
 
+
+    const detailPages = useMemo(() => {
+        const allChunks: {
+            subject: string;
+            largeUnit: string;
+            smallUnit: string;
+            chunkIndex: number;
+            totalChunks: number;
+            items: string[];
+        }[] = [];
+
+        groupedData.forEach(([subject, largeUnits]) => {
+            const activeLargeUnits = Array.from(largeUnits.entries()).filter(([_, smallUnitsMap]) => {
+                return Array.from(smallUnitsMap.values()).some((details: any) => 
+                    details.some((type: any) => {
+                        const prog = progressMap.get(type);
+                        return prog && prog.Total_Attempts > 0;
+                    })
+                );
+            }).sort((a, b) => getSortIndex(a[0], 'large', subject) - getSortIndex(b[0], 'large', subject));
+
+            activeLargeUnits.forEach(([largeUnit, smallUnitsMap]) => {
+                const activeSmallUnits = Array.from(smallUnitsMap.entries()).filter(([_, detailTypes]) => {
+                    return (detailTypes as string[]).some((type: string) => {
+                        const prog = progressMap.get(type);
+                        return prog && prog.Total_Attempts > 0;
+                    });
+                }).sort((a, b) => getSortIndex(a[0], 'small', `${subject}|${largeUnit}`) - getSortIndex(b[0], 'small', `${subject}|${largeUnit}`));
+
+                activeSmallUnits.forEach(([smallUnit, detailTypes]) => {
+                    const activeDetails = (detailTypes as string[]).filter((type: string) => {
+                        const prog = progressMap.get(type);
+                        return prog && prog.Total_Attempts > 0;
+                    }).sort((a, b) => getSortIndex(a, 'detail', `${subject}|${largeUnit}|${smallUnit}`) - getSortIndex(b, 'detail', `${subject}|${largeUnit}|${smallUnit}`));
+
+                    if (activeDetails.length === 0) return;
+
+                    const chunkSize = 12;
+                    const totalChunks = Math.ceil(activeDetails.length / chunkSize);
+                    for (let i = 0; i < activeDetails.length; i += chunkSize) {
+                        allChunks.push({
+                            subject,
+                            largeUnit,
+                            smallUnit,
+                            chunkIndex: Math.floor(i / chunkSize),
+                            totalChunks,
+                            items: activeDetails.slice(i, i + chunkSize)
+                        });
+                    }
+                });
+            });
+        });
+
+        const pages: typeof allChunks[] = [];
+        let currentPage: typeof allChunks = [];
+        let currentItemCount = 0;
+
+        allChunks.forEach(chunk => {
+            if (currentPage.length > 0 && currentItemCount + chunk.items.length > 12) {
+                pages.push(currentPage);
+                currentPage = [];
+                currentItemCount = 0;
+            }
+            currentPage.push(chunk);
+            currentItemCount += chunk.items.length;
+        });
+        if (currentPage.length > 0) {
+            pages.push(currentPage);
+        }
+
+        return pages;
+    }, [groupedData, progressMap, getSortIndex]);
 
     const handleDownloadPdf = async () => {
         if (!reportRef.current) return;
@@ -552,8 +659,8 @@ export const Report: React.FC<ReportProps> = ({
                 pdf.addImage(imgData, 'JPEG', margin, currentY, contentWidth, imgHeight, undefined, 'MEDIUM');
                 currentY += imgHeight + 4;
 
-                // Force page break after Unit Summary to ensure Details start on Page 2
-                if (section.id === 'section-unit-summary') {
+                // Force page break after specific sections
+                if (section.id === 'section-page-1') {
                     pdf.addPage();
                     currentY = margin;
                 }
@@ -627,171 +734,170 @@ export const Report: React.FC<ReportProps> = ({
                     </div>
                 </div>
                 
-                {/* [단원별 요약 섹션] */}
-                {unitLevelAnalysis.length > 0 && (
-                    <div id="section-unit-summary" data-pdf-section className="space-y-8 bg-slate-50/50 p-8 rounded-[2rem] border border-slate-100 shadow-sm">
-                        <div className="flex items-center gap-3 pb-4 border-b border-slate-200">
-                            <BarChart3 className="w-6 h-6 text-indigo-500" />
-                            <h2 className="text-2xl font-bold text-slate-800 tracking-tight">단원별 성취도 요약</h2>
-                        </div>
-                        <div className="space-y-8">
-                        {unitLevelAnalysis.map((largeUnit) => (
-                            <div key={largeUnit.name} className="space-y-4">
-                                <div className="flex justify-between items-center px-1">
-                                    <h3 className="text-lg font-bold text-slate-700">{largeUnit.name}</h3>
-                                    <span className="text-xl font-black text-indigo-600">{largeUnit.displayScore.toFixed(1)}점</span>
+                {/* [1페이지] 학습 요약 & 단원별 요약 */}
+                <div id="section-page-1" data-pdf-section className="space-y-8">
+                    {/* 학습 활동 요약 */}
+                    <div className="space-y-6">
+                        <h2 className="text-2xl font-black flex items-center gap-2 text-slate-800">
+                            <BarChart3 className="w-6 h-6 text-indigo-600" /> 학습 활동 요약
+                        </h2>
+                        <div className="grid grid-cols-1 gap-6 bg-slate-50 p-6 rounded-3xl border border-slate-200">
+                            {/* 최근 10주 막대그래프 */}
+                            <div className="space-y-4">
+                                <div className="flex justify-between text-sm font-bold text-slate-600">
+                                    <span>최근 10주 풀이</span>
                                 </div>
-                                <div className="w-full bg-slate-200 rounded-full h-4 overflow-hidden shadow-inner">
-                                    <div 
-                                        className="h-full rounded-full transition-all duration-1000" 
-                                        style={{ width: `${largeUnit.displayScore < 0 ? 0 : largeUnit.displayScore}%`, ...getBarColorStyle(largeUnit.displayScore) }}
-                                    ></div>
-                                </div>
-                                {largeUnit.subUnits.length > 0 && (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-4 mt-6 pt-6 border-t border-slate-200">
-                                        {largeUnit.subUnits.map((mediumUnit) => (
-                                            <div key={mediumUnit.name} className="flex items-center justify-between">
-                                                <h4 className="text-xs font-bold text-slate-500 truncate w-36">{mediumUnit.name}</h4>
-                                                <div className="flex items-center gap-3 flex-grow justify-end">
-                                                    <div className="w-24 bg-slate-200 rounded-full h-2 overflow-hidden">
-                                                        <div 
-                                                            className="h-full rounded-full transition-all duration-1000" 
-                                                            style={{ width: `${mediumUnit.displayScore < 0 ? 0 : mediumUnit.displayScore}%`, ...getBarColorStyle(mediumUnit.displayScore) }}
-                                                        ></div>
-                                                    </div>
-                                                    <p className="text-xs font-black text-slate-800 w-10 text-right">{mediumUnit.displayScore.toFixed(1)}</p>
+                                <div className="flex items-end justify-between h-40 gap-2">
+                                    {activityStats.weeks.map((w, i) => {
+                                        const maxCount = Math.max(...activityStats.weeks.map(x => x.count), 10);
+                                        const heightPct = (w.count / maxCount) * 100;
+                                        return (
+                                            <div key={i} className="flex flex-col items-center flex-1 gap-1 h-full justify-end">
+                                                <div className="text-sm font-bold text-teal-600">{w.count > 0 ? w.count : ''}</div>
+                                                <div className="w-full bg-slate-200 rounded-t-md relative flex items-end justify-center" style={{ height: '100%' }}>
+                                                    <div 
+                                                        className="w-full bg-teal-500 rounded-t-md transition-all duration-1000 absolute bottom-0" 
+                                                        style={{ height: `${heightPct}%` }}
+                                                    />
                                                 </div>
+                                                <div className="text-xs font-bold text-slate-500 truncate w-full text-center">{w.label}</div>
                                             </div>
-                                        ))}
-                                    </div>
-                                )}
+                                        );
+                                    })}
+                                </div>
                             </div>
-                        ))}
                         </div>
                     </div>
-                )}
 
-                {/* Detailed Analysis with Subject -> Large Unit grouping */}
-                {groupedData.map(([subject, largeUnits]) => {
-                    const activeLargeUnits = Array.from(largeUnits.entries()).filter(([_, smallUnitsMap]) => {
-                        return Array.from(smallUnitsMap.values()).some((details: any) => 
-                            details.some((type: any) => {
-                                const prog = progressMap.get(type);
-                                return prog && prog.Total_Attempts > 0;
-                            })
-                        );
-                    });
-
-                    if (activeLargeUnits.length === 0) return null;
-
-                    return (
-                        <div key={subject} className="space-y-10">
-                            <div className="space-y-16">
-                                {activeLargeUnits.sort((a, b) => getSortIndex(a[0], 'large', subject) - getSortIndex(b[0], 'large', subject)).map(([largeUnit, smallUnitsMap]) => {
-                                    const activeSmallUnits = Array.from(smallUnitsMap.entries()).filter(([_, detailTypes]) => {
-                                        return (detailTypes as string[]).some((type: string) => {
-                                            const prog = progressMap.get(type);
-                                            return prog && prog.Total_Attempts > 0;
-                                        });
-                                    });
-
-                                    if (activeSmallUnits.length === 0) return null;
-
-                                    return (
-                                        <div key={largeUnit} className="space-y-12">
-                                            {activeSmallUnits.sort((a, b) => getSortIndex(a[0], 'small', `${subject}|${largeUnit}`) - getSortIndex(b[0], 'small', `${subject}|${largeUnit}`)).map(([smallUnit, detailTypes], smallUnitIndex) => {
-                                                const activeDetails = (detailTypes as string[]).filter((type: string) => {
-                                                    const prog = progressMap.get(type);
-                                                    return prog && prog.Total_Attempts > 0;
-                                                });
-                                                
-                                                // Sort active details based on classification order
-                                                activeDetails.sort((a, b) => getSortIndex(a, 'detail', `${subject}|${largeUnit}|${smallUnit}`) - getSortIndex(b, 'detail', `${subject}|${largeUnit}|${smallUnit}`));
-
-                                                // Pagination logic: Chunk details into groups of 8
-                                                const chunkSize = 8;
-                                                const detailChunks = [];
-                                                for (let i = 0; i < activeDetails.length; i += chunkSize) {
-                                                    detailChunks.push(activeDetails.slice(i, i + chunkSize));
-                                                }
-
-                                                return (
-                                                    <React.Fragment key={smallUnit}>
-                                                        {detailChunks.map((chunk, chunkIndex) => (
+                    {/* 단원별 성취도 요약 */}
+                    {unitLevelAnalysis.length > 0 && (
+                        <div className="space-y-8 bg-slate-50/50 p-8 rounded-[2rem] border border-slate-100 shadow-sm">
+                            <div className="flex items-center gap-3 pb-4 border-b border-slate-200">
+                                <BarChart3 className="w-6 h-6 text-indigo-500" />
+                                <h2 className="text-2xl font-bold text-slate-800 tracking-tight">단원별 성취도 요약</h2>
+                            </div>
+                            <div className="space-y-8">
+                            {unitLevelAnalysis.map((largeUnit) => (
+                                <div key={largeUnit.name} className="space-y-4">
+                                    <div className="flex justify-between items-center px-1">
+                                        <h3 className="text-lg font-bold text-slate-700">{largeUnit.name}</h3>
+                                        <span className="text-xl font-black text-indigo-600">{largeUnit.displayScore.toFixed(1)}점</span>
+                                    </div>
+                                    <div className="w-full bg-slate-200 rounded-full h-4 overflow-hidden shadow-inner">
+                                        <div 
+                                            className="h-full rounded-full transition-all duration-1000" 
+                                            style={{ width: `${largeUnit.displayScore < 0 ? 0 : largeUnit.displayScore}%`, ...getBarColorStyle(largeUnit.displayScore) }}
+                                        ></div>
+                                    </div>
+                                    {largeUnit.subUnits.length > 0 && (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-4 mt-6 pt-6 border-t border-slate-200">
+                                            {largeUnit.subUnits.map((mediumUnit) => (
+                                                <div key={mediumUnit.name} className="flex items-center justify-between">
+                                                    <h4 className="text-xs font-bold text-slate-500 truncate w-36">{mediumUnit.name}</h4>
+                                                    <div className="flex items-center gap-3 flex-grow justify-end">
+                                                        <div className="w-24 bg-slate-200 rounded-full h-2 overflow-hidden">
                                                             <div 
-                                                                id={`section-detail-${largeUnit.replace(/\s+/g, '_')}-${smallUnit.replace(/\s+/g, '_')}-${smallUnitIndex}-${chunkIndex}`} 
-                                                                key={`${smallUnit}-${chunkIndex}`} 
-                                                                data-pdf-section 
-                                                                className="space-y-6"
-                                                            >
-                                                                
-                                                                <div className="flex items-center gap-4 mb-2">
-                                                                    <TrendingUp className="w-4 h-4 text-indigo-400" />
-                                                                    <h5 className="text-base font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                                                                        <span className="text-indigo-600">대단원:</span> <span className="text-slate-700">{largeUnit}</span>
-                                                                        <span className="mx-2 text-slate-300">|</span>
-                                                                        <span className="text-indigo-400">소단원:</span> <span className="text-slate-700">{smallUnit}</span>
-                                                                        {detailChunks.length > 1 && <span className="text-xs text-gray-400 ml-2">({chunkIndex + 1}/{detailChunks.length})</span>}
-                                                                    </h5>
-                                                                    <div className="flex-grow h-px bg-slate-200"></div>
-                                                                </div>
-                                                                
-                                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                                                    {chunk.map(type => {
-                                                                        const progress = progressMap.get(type);
-                                                                        if (!progress) return null;
-                                                                        const displayScore = progress.DisplayScore != null ? progress.DisplayScore : -1;
-                                                                        
-                                                                        const stats = detailTypeStatsMap.get(type) || {
-                                                                            total: { correct: 0, total: 0 },
-                                                                            high: { correct: 0, total: 0 },
-                                                                            mid: { correct: 0, total: 0 },
-                                                                            low: { correct: 0, total: 0 }
-                                                                        };
-
-                                                                        return (
-                                                                            <div key={type} className="p-8 bg-white rounded-[2rem] border border-gray-300 shadow-lg hover:shadow-2xl transition-all group border-b-4 border-b-transparent hover:border-b-indigo-500">
-                                                                                <div className="flex items-start justify-between mb-6 gap-4">
-                                                                                    <div className="space-y-1">
-                                                                                        <p className="font-black text-slate-800 text-xl leading-snug group-hover:text-indigo-600 transition-colors min-h-[3.5rem] flex items-center">
-                                                                                            <LatexRenderer text={type} />
-                                                                                        </p>
-                                                                                    </div>
-                                                                                    <div className="text-right">
-                                                                                        <p className="text-3xl font-black text-slate-900 leading-none">{displayScore < 0 ? '데이터 부족' : displayScore.toFixed(1)}</p>
-                                                                                        <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-widest">{getMasteryLevel(displayScore)}</p>
-                                                                                    </div>
-                                                                                </div>
-                                                                                
-                                                                                <div className="w-full bg-slate-100 rounded-full h-4 overflow-hidden shadow-inner mb-4">
-                                                                                    <div 
-                                                                                        className="h-full rounded-full transition-all duration-1000" 
-                                                                                        style={{ width: `${displayScore < 0 ? 0 : displayScore}%`, ...getBarColorStyle(displayScore) }}
-                                                                                    ></div>
-                                                                                </div>
-                                                                                
-                                                                                <MetricGrid metrics={{
-                                                                                    "전체 정답율": `${stats.total.correct}/${stats.total.total}`,
-                                                                                    "하 문제 정답율": `${stats.low.correct}/${stats.low.total}`,
-                                                                                    "중 문제 정답율": `${stats.mid.correct}/${stats.mid.total}`,
-                                                                                    "상 문제 정답율": `${stats.high.correct}/${stats.high.total}`,
-                                                                                }}/>
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </React.Fragment>
-                                                );
-                                            })}
+                                                                className="h-full rounded-full transition-all duration-1000" 
+                                                                style={{ width: `${mediumUnit.displayScore < 0 ? 0 : mediumUnit.displayScore}%`, ...getBarColorStyle(mediumUnit.displayScore) }}
+                                                            ></div>
+                                                        </div>
+                                                        <p className="text-xs font-black text-slate-800 w-10 text-right">{mediumUnit.displayScore.toFixed(1)}</p>
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
-                                    );
-                                })}
+                                    )}
+                                </div>
+                            ))}
                             </div>
                         </div>
-                    );
-                })}
+                    )}
+                </div>
+
+                {/* [2페이지~] 세부 유형 분석 */}
+                {detailPages.map((page, pageIndex) => (
+                    <div key={`page-${pageIndex}`} data-pdf-section className="space-y-8 pt-6">
+                        {page.map((chunk, chunkIndexInPage) => (
+                            <div key={`${chunk.largeUnit}-${chunk.smallUnit}-${chunk.chunkIndex}`} className="space-y-4">
+                                {/* Header */}
+                                <div className="flex items-center gap-4 mb-2">
+                                    <TrendingUp className="w-4 h-4 text-indigo-400" />
+                                    <h5 className="text-base font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                                        <span className="text-indigo-600">대단원:</span> <span className="text-slate-700">{chunk.largeUnit}</span>
+                                        <span className="mx-2 text-slate-300">|</span>
+                                        <span className="text-indigo-400">소단원:</span> <span className="text-slate-700">{chunk.smallUnit}</span>
+                                        {chunk.totalChunks > 1 && <span className="text-xs text-gray-400 ml-2">({chunk.chunkIndex + 1}/{chunk.totalChunks})</span>}
+                                    </h5>
+                                    <div className="flex-grow h-px bg-slate-200"></div>
+                                </div>
+
+                                {/* Table */}
+                                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                                    <table className="w-full text-sm text-left">
+                                        <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-bold border-b border-gray-200">
+                                            <tr>
+                                                <th className="px-6 py-4 whitespace-nowrap">유형명</th>
+                                                <th className="px-4 py-4 text-center whitespace-nowrap">전체 정답율</th>
+                                                <th className="px-4 py-4 text-center whitespace-nowrap">하 문제 정답율</th>
+                                                <th className="px-4 py-4 text-center whitespace-nowrap">중 문제 정답율</th>
+                                                <th className="px-4 py-4 text-center whitespace-nowrap">상 문제 정답율</th>
+                                                <th className="px-6 py-4 text-right whitespace-nowrap">성취도</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100">
+                                            {chunk.items.map(type => {
+                                                const progress = progressMap.get(type);
+                                                if (!progress) return null;
+                                                const displayScore = progress.DisplayScore != null ? progress.DisplayScore : -1;
+                                                
+                                                const stats = detailTypeStatsMap.get(type) || {
+                                                    total: { correct: 0, total: 0 },
+                                                    high: { correct: 0, total: 0 },
+                                                    mid: { correct: 0, total: 0 },
+                                                    low: { correct: 0, total: 0 }
+                                                };
+
+                                                return (
+                                                    <tr key={type} className="hover:bg-slate-50/50 transition-colors">
+                                                        <td className="px-6 py-4 font-bold text-slate-800 w-1/3">
+                                                            <LatexRenderer text={type} />
+                                                        </td>
+                                                        <td className="px-4 py-4 text-center text-slate-600 font-medium whitespace-nowrap">
+                                                            {stats.total.correct} / {stats.total.total}
+                                                        </td>
+                                                        <td className="px-4 py-4 text-center text-slate-600 font-medium whitespace-nowrap">
+                                                            {stats.low.correct} / {stats.low.total}
+                                                        </td>
+                                                        <td className="px-4 py-4 text-center text-slate-600 font-medium whitespace-nowrap">
+                                                            {stats.mid.correct} / {stats.mid.total}
+                                                        </td>
+                                                        <td className="px-4 py-4 text-center text-slate-600 font-medium whitespace-nowrap">
+                                                            {stats.high.correct} / {stats.high.total}
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                            <div className="flex flex-col items-end gap-1">
+                                                                <div className="flex items-baseline gap-2">
+                                                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{getMasteryLevel(displayScore)}</span>
+                                                                    <span className="text-lg font-black text-slate-900">{displayScore < 0 ? '-' : displayScore.toFixed(1)}</span>
+                                                                </div>
+                                                                <div className="w-32 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                                                                    <div 
+                                                                        className="h-full rounded-full transition-all duration-1000" 
+                                                                        style={{ width: `${displayScore < 0 ? 0 : displayScore}%`, ...getBarColorStyle(displayScore) }}
+                                                                    ></div>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ))}
             </div>
 
             {/* Footer Line */}
