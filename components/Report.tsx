@@ -505,7 +505,7 @@ export const Report: React.FC<ReportProps> = ({
 
                     if (activeDetails.length === 0) return;
 
-                    const chunkSize = 12;
+                    const chunkSize = 14;
                     const totalChunks = Math.ceil(activeDetails.length / chunkSize);
                     for (let i = 0; i < activeDetails.length; i += chunkSize) {
                         allChunks.push({
@@ -526,7 +526,7 @@ export const Report: React.FC<ReportProps> = ({
         let currentItemCount = 0;
 
         allChunks.forEach(chunk => {
-            if (currentPage.length > 0 && currentItemCount + chunk.items.length > 12) {
+            if (currentPage.length > 0 && currentItemCount + chunk.items.length > 14) {
                 pages.push(currentPage);
                 currentPage = [];
                 currentItemCount = 0;
