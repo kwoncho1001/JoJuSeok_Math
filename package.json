@@ -9,13 +9,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react-dom": "^19.2.4",
+    "@google/genai": "^1.38.0",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^2.5.1",
+    "katex": "0.16.10",
     "lucide-react": "^0.563.0",
     "react": "^19.2.4",
-    "@google/genai": "^1.38.0",
-    "jspdf": "^2.5.1",
-    "html2canvas": "^1.4.1",
-    "katex": "0.16.10"
+    "react-dom": "^19.2.4",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

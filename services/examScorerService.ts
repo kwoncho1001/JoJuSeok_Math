@@ -16,7 +16,7 @@ const getTimestamp = (ts: string | number | Date): string => {
 }
 
 export const calculateExamScores = (
-  questionDb: QuestionDBItem[],
+  questionsForExam: QuestionDBItem[],
   studentResponses: StudentResponseRaw[],
   examId: string, // This is the original examId, not prefixed with subject
   config: AnalysisConfig
@@ -28,10 +28,7 @@ export const calculateExamScores = (
   const cleanedExamId = normalizeString(examId);
 
   // First, find all questions for the given exam ID
-  const allQuestionsForExam = questionDb.filter(q => {
-      const id = normalizeString(q['시험 ID/교재명'] || q['시험 ID'] || q['시험ID']);
-      return id === cleanedExamId;
-  });
+  const allQuestionsForExam = questionsForExam;
 
   if (allQuestionsForExam.length === 0) {
     throw new Error(`시험 ID '${cleanedExamId}'에 해당하는 문제가 Question DB에 없습니다.`);
@@ -78,7 +75,7 @@ export const calculateExamScores = (
   const qStatsMap = new Map<number, { correct: number; total: number }>();
   uniqueRelevantQuestions.forEach(q => qStatsMap.set(q['번호'], { correct: 0, total: 0 }));
 
-  const relevantResponses = studentResponses.filter(r => normalizeString(r['시험 ID'] || r['시험ID']) === cleanedExamId);
+  const relevantResponses = studentResponses;
   
   if (relevantResponses.length === 0) {
     // This case might not be an error if no one took the filtered version of the test
@@ -88,7 +85,26 @@ export const calculateExamScores = (
   const studentScores: { name: string; score: number; correctCount: number; examDate: string }[] = [];
   const answerRegex = /^문제 답안 입력 \[(\d+)번]/;
 
+  const latestResponseByStudent = new Map<string, StudentResponseRaw>();
   for (const response of relevantResponses) {
+    const studentName = normalizeString(response['이름']);
+    if (!studentName) continue;
+    
+    const currentLatest = latestResponseByStudent.get(studentName);
+    if (!currentLatest) {
+        latestResponseByStudent.set(studentName, response);
+    } else {
+        const currentTs = new Date(getTimestamp(currentLatest['타임스탬프'])).getTime();
+        const newTs = new Date(getTimestamp(response['타임스탬프'])).getTime();
+        if (newTs > currentTs) {
+            latestResponseByStudent.set(studentName, response);
+        }
+    }
+  }
+
+  const responsesToProcess = Array.from(latestResponseByStudent.values());
+
+  for (const response of responsesToProcess) {
     const studentName = normalizeString(response['이름']);
     if (!studentName) continue;
 

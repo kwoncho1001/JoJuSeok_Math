@@ -372,14 +372,23 @@ export const processStudentData = (
   // 5. Batch generate Exam Score Report (only for tests)
   let fullExamScoreReport: ScoredStudent[] = [];
   if (studentResponses && studentResponses.length > 0) {
-      // Extract unique exam IDs from student responses (original exam ID without subject prefix)
-      const uniqueExamIdsInResponses = new Set(studentResponses.map(r => normalizeString(r['시험 ID'] || r['시험ID'])));
-      
-      for (const examId of uniqueExamIdsInResponses) {
+      // Group student responses by exam ID
+      const responsesByExamId = new Map<string, StudentResponseRaw[]>();
+      for (const r of studentResponses) {
+          const examId = normalizeString(r['시험 ID'] || r['시험ID']);
           if (!examId) continue;
+          if (!responsesByExamId.has(examId)) {
+              responsesByExamId.set(examId, []);
+          }
+          responsesByExamId.get(examId)!.push(r);
+      }
+      
+      for (const [examId, responsesForExam] of responsesByExamId.entries()) {
           try {
-            // Pass the full question DB and config; the scorer will filter by selectedSubUnits
-            const { results } = calculateExamScores(questionDb, studentResponses, examId, config);
+            const questionsForExam = questionsByExamId.get(examId) || [];
+            if (questionsForExam.length === 0) continue;
+            // Pass the filtered question DB and config; the scorer will filter by selectedSubUnits
+            const { results } = calculateExamScores(questionsForExam, responsesForExam, examId, config);
             if (results.length > 0) {
                 const resultsWithExamId = results.map(r => ({ ...r, '시험 ID': examId }));
                 fullExamScoreReport = fullExamScoreReport.concat(resultsWithExamId);

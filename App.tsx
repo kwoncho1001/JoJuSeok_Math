@@ -13,8 +13,8 @@ import { processStudentData } from './services/analysisService';
 import { readFile, fetchSheetData } from './services/fileService';
 import type { QuestionDBItem, TransactionLogItem, ProgressMasterItem, ScoredStudent, StudentResponseRaw, TextbookResponseRaw, AnalysisConfig, ClassificationCsvItem, ClassificationTree, StudentMetadata } from './types';
 import { QUESTION_DB_URL, STUDENT_RESPONSE_URL, CLASSIFICATION_CSV_URL } from './constants';
+import { usePdfGenerator } from './hooks/usePdfGenerator';
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 
 type FileData<T> = {
   file: File | null;
@@ -35,56 +35,41 @@ const DEFAULT_CONFIG: AnalysisConfig = {
   selectedSubUnits: [],
 };
 
-export const App: React.FC = () => {
-  const [questionDb, setQuestionDb] = useState<FileData<QuestionDBItem>>({ file: null, data: null, name: 'Question_DB' });
-  const [studentResponse, setStudentResponse] = useState<FileData<StudentResponseRaw>>({ file: null, data: null, name: 'Student_Response' });
-  const [textbookResponse, setTextbookResponse] = useState<FileData<TextbookResponseRaw>>({ file: null, data: null, name: 'Textbook_Response' });
-  const [transactionLog, setTransactionLog] = useState<FileData<TransactionLogItem>>({ file: null, data: null, name: 'Transaction_Log' });
-  const [progressMaster, setProgressMaster] = useState<FileData<ProgressMasterItem>>({ file: null, data: null, name: 'Progress_Master' });
-  const [classificationCsv, setClassificationCsv] = useState<FileData<ClassificationCsvItem>>({ file: null, data: null, name: 'Classification_CSV' });
-  
-  const [analysisConfig, setAnalysisConfig] = useState<AnalysisConfig>(() => {
-    try {
-      const savedConfig = localStorage.getItem('analysisConfig');
-      const parsed = savedConfig ? JSON.parse(savedConfig) : {};
-      return { ...DEFAULT_CONFIG, ...parsed };
-    } catch {
-      return DEFAULT_CONFIG;
-    }
-  });
-  
-  const [classificationTree, setClassificationTree] = useState<ClassificationTree>(new Map());
-  const [newTransactionLog, setNewTransactionLog] = useState<TransactionLogItem[]>([]);
-  const [newProgressMaster, setNewProgressMaster] = useState<ProgressMasterItem[]>([]);
-  const [examScoreReport, setExamScoreReport] = useState<ScoredStudent[]>([]);
-  
-  const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
-  const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
-  const [selectedSubject, setSelectedSubject] = useState(SUBJECTS[0]);
+import { useAppStore } from './store/useAppStore';
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isProcessed, setIsProcessed] = useState(false);
-  
-  const [mainTab, setMainTab] = useState<MainTab>('analyzer');
-  const [analyzerTab, setAnalyzerTab] = useState<AnalyzerTab>('dashboard');
+export const App: React.FC = () => {
+  const {
+    questionDb, setQuestionDb,
+    studentResponse, setStudentResponse,
+    textbookResponse, setTextbookResponse,
+    transactionLog, setTransactionLog,
+    progressMaster, setProgressMaster,
+    classificationCsv, setClassificationCsv,
+    analysisConfig, setAnalysisConfig,
+    classificationTree, setClassificationTree,
+    newTransactionLog, setNewTransactionLog,
+    newProgressMaster, setNewProgressMaster,
+    examScoreReport, setExamScoreReport,
+    selectedGrade, setSelectedGrade,
+    selectedStudent, setSelectedStudent,
+    selectedSubject, setSelectedSubject,
+    isLoading, setIsLoading,
+    isSyncing, setIsSyncing,
+    syncStatus, setSyncStatus,
+    error, setError,
+    isProcessed, setIsProcessed,
+    mainTab, setMainTab,
+    analyzerTab, setAnalyzerTab
+  } = useAppStore();
+
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState({ current: 0, total: 0, studentName: '' });
   const [isBulkEmailing, setIsBulkEmailing] = useState(false);
   const [bulkEmailProgress, setBulkEmailProgress] = useState({ current: 0, total: 0, studentName: '' });
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [bulkSelectedStudents, setBulkSelectedStudents] = useState<string[]>([]);
+  const { generatePdf } = usePdfGenerator();
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('analysisConfig', JSON.stringify(analysisConfig));
-    } catch (e) {
-      console.error("Failed to save settings to local storage:", e);
-    }
-  }, [analysisConfig]);
-  
   useEffect(() => {
     if (classificationCsv.data && classificationCsv.data.length > 0) {
         const newClassificationTree: ClassificationTree = new Map();
@@ -111,9 +96,6 @@ export const App: React.FC = () => {
         
         newClassificationTree.forEach(largeMap => {
             // Do not sort smallList to preserve CSV order
-            // largeMap.forEach((smallList, largeKey, map) => {
-            //     map.set(largeKey, smallList.sort());
-            // });
         });
 
         setClassificationTree(newClassificationTree);
@@ -259,7 +241,7 @@ export const App: React.FC = () => {
       const data = await readFile<T>(file);
       setter(prev => ({ ...prev, data }));
     } catch (err: unknown) {
-      const errorMessage: string = err instanceof Error ? err.message : String(err as any);
+      const errorMessage: string = err instanceof Error ? err.message : String(err);
       setError(`Error parsing ${file ? file.name : 'unknown file'}: ${errorMessage}. Please check the file format.`);
       setter(prev => ({ ...prev, file: null, data: null }));
     }
@@ -292,7 +274,7 @@ export const App: React.FC = () => {
         setSyncStatus({ message: '데이터 동기화 완료!', type: 'success' });
         setTimeout(() => setSyncStatus(null), 5000);
     } catch (err: unknown) {
-        const errorMessageDetail: string = err instanceof Error ? err.message : String(err as any);
+        const errorMessageDetail: string = err instanceof Error ? err.message : String(err);
         const errorMessage = `동기화 실패: ${errorMessageDetail}. 잠시 후 다시 시도해주세요.`;
         setError(errorMessage);
         setSyncStatus({ message: errorMessage, type: 'error' });
@@ -440,138 +422,22 @@ export const App: React.FC = () => {
       />
     );
 
-    // 3. PDF generation logic for tempDiv (duplicated from Report.tsx's handleDownloadPdf)
+    // 3. PDF generation logic for tempDiv
     const reportElement = tempDiv;
-    
-    // Store original styles of the temporary report element before modification
-    const originalCssText = reportElement.style.cssText; // Store all original inline styles
-    const originalClassList = Array.from(reportElement.classList); // Store original classes
-
-    // Inject temporary CSS to freeze animations, shadows, and apply specific capture layout
-    const style = document.createElement('style');
-    style.innerHTML = `
-        /* Generic capture mode disabling transitions/animations/shadows */
-        .capturing * {
-            transition: none !important;
-            animation: none !important;
-            box-shadow: none !important;
-            text-shadow: none !important;
-        }
-        .capturing .h-full {
-            transition-property: none !important; /* Prevent 0% color bar */
-        }
-        /* Overall report container styles for consistent PDF rendering */
-        .capturing {
-            width: 900px !important;
-            min-width: 900px !important;
-            background-color: white !important;
-            line-height: 1.2 !important; /* Prevent text shifting */
-            -webkit-font-smoothing: antialiased !important;
-            -moz-osx-font-smoothing: grayscale !important;
-            position: relative !important; /* Ensure relative positioning for correct rendering context */
-            z-index: 9999 !important; /* Bring to front to ensure visibility for capture */
-        }
-        /* 텍스트 짤림 방지 */
-        .capturing .truncate {
-            overflow: visible !important;
-            white-space: normal !important;
-        }
-        /* 섹션 강제 페이지 나누기 방지 및 여백 */
-        .capturing [data-pdf-section] {
-            break-inside: avoid !important;
-            page-break-inside: avoid !important;
-            margin-bottom: 20px !important; /* Add consistent margin between sections */
-        }
-    `;
-    document.head.appendChild(style);
-    reportElement.classList.add('capturing'); // Add capturing class to the temporary div
-
-    // Wait for fonts and animations to settle
-    if (document.fonts) await document.fonts.ready;
-    await new Promise(resolve => setTimeout(resolve, 500)); // 시간을 0.5초로 단축
+    const reportTitle = `${new Date().getFullYear()}년 ${new Date().getMonth() + 1}월 ${Math.ceil((new Date().getDate() + new Date(new Date().getFullYear(), new Date().getMonth(), 1).getDay()) / 7)}주차 - ${studentIdToGenerate} 유형 분석 보고서`;
 
     try {
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        const pageWidth = pdf.internal.pageSize.getWidth();
-        const margin = 12;
-        const contentWidth = pageWidth - (margin * 2);
-        
-        // Header Capture
-        const headerElement = reportElement.querySelector('[data-pdf-header]') as HTMLElement;
-        const headerCanvas = await html2canvas(headerElement, {
-            scale: 1.5, // 선명도 조정 (2 -> 1.5)
-            useCORS: true,
-            backgroundColor: '#ffffff',
-            foreignObjectRendering: false,
-            logging: false, // 로깅 비활성화
-            // Removed windowWidth here, relying on CSS for overall width
-        });
-        const headerImgData = headerCanvas.toDataURL('image/jpeg', 0.7); // 품질 조정 (0.8 -> 0.7)
-        const headerHeight = (headerCanvas.height * contentWidth) / headerCanvas.width;
-
-        // Sectional Capture
-        const sections = Array.from(reportElement.querySelectorAll('[data-pdf-section]')) as HTMLElement[];
-        let currentY = margin;
-
-        for (let i = 0; i < sections.length; i++) {
-            const section = sections[i];
-            const canvas = await html2canvas(section, {
-                scale: 1.5, // 선명도 조정 (2 -> 1.5)
-                useCORS: true,
-                backgroundColor: '#ffffff',
-                // Removed windowWidth here, relying on CSS for overall width
-                foreignObjectRendering: false,
-                logging: false // 로깅 비활성화
-            });
-
-            const imgData = canvas.toDataURL('image/jpeg', 0.7); // 품질 조정 (0.8 -> 0.7)
-            const imgHeight = (canvas.height * contentWidth) / canvas.width;
-
-            // Page break check (header space considered)
-            if (currentY + imgHeight > pdf.internal.pageSize.getHeight() - (margin + headerHeight + 10)) { // ~285 total height, adjust for header and bottom margin
-                pdf.addPage();
-                currentY = margin;
-            }
-
-            // Add header to every page
-            if (currentY === margin) {
-                pdf.addImage(headerImgData, 'JPEG', margin, margin, contentWidth, headerHeight, undefined, 'MEDIUM');
-                currentY += headerHeight + 6; // Spacing after header
-
-                // Footer: Indigo Line
-                const pageHeight = pdf.internal.pageSize.getHeight();
-                pdf.setDrawColor(79, 70, 229); // Indigo-600
-                pdf.setLineWidth(0.5);
-                pdf.line(margin, pageHeight - margin, pageWidth - margin, pageHeight - margin);
-            }
-
-            pdf.addImage(imgData, 'JPEG', margin, currentY, contentWidth, imgHeight, undefined, 'MEDIUM');
-            currentY += imgHeight + 4; // Spacing between sections
-
-            // Force page break after Unit Summary to ensure Details start on Page 2
-            if (section.id === 'section-unit-summary') {
-                pdf.addPage();
-                currentY = margin;
-            }
-        }
-
-        const reportTitle = `${new Date().getFullYear()}년 ${new Date().getMonth() + 1}월 ${Math.ceil((new Date().getDate() + new Date(new Date().getFullYear(), new Date().getMonth(), 1).getDay()) / 7)}주차 - ${studentIdToGenerate} 유형 분석 보고서`;
-        pdf.save(`${reportTitle}.pdf`);
-
+        await generatePdf(reportElement, { reportTitle });
     } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error as any);
+        const message = error instanceof Error ? error.message : String(error);
         console.error(`Failed to generate PDF for ${studentIdToGenerate}: ${message}`);
         throw error;
     } finally {
         // Clean up temporary DOM elements and styles
         root.unmount();
         document.body.removeChild(tempDiv);
-        reportElement.classList.remove('capturing'); 
-        reportElement.classList.add(...originalClassList); // Restore original classes
-        reportElement.style.cssText = originalCssText; // Restore original inline styles
-        style.remove(); // Remove injected style
     }
-  }, [newProgressMaster, newTransactionLog, examScoreReport, questionDb.data, allSubUnitsCount, selectedSubUnitsCount, analysisConfig]);
+  }, [newProgressMaster, newTransactionLog, examScoreReport, questionDb.data, allSubUnitsCount, selectedSubUnitsCount, analysisConfig, generatePdf]);
 
 
   const handleBulkDownloadReports = useCallback(async () => {
@@ -611,7 +477,7 @@ export const App: React.FC = () => {
                 
                 await generateAndSavePdfForStudent(student, subjectForReport);
             } catch (err: unknown) {
-                const message = err instanceof Error ? err.message : String(err as any);
+                const message = err instanceof Error ? err.message : String(err);
                 console.error(`Failed to download report for ${student}: ${message}`);
                 // In chunk mode, we log errors but don't stop or delay significantly to maintain speed
             }

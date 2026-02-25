@@ -4,9 +4,8 @@ import React, { useMemo, useRef, useState } from 'react';
 import type { QuestionDBItem, ProgressMasterItem, TransactionLogItem, AggregatedUnitData, ScoredStudent, AnalysisConfig, ClassificationCsvItem } from '../types';
 import { Download, LoaderCircle, Target, BarChart3, TrendingUp, Mail, Trophy } from 'lucide-react';
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import { LatexRenderer } from './LatexRenderer'; // Fix: Corrected typo in import path
-// Removed import { generateStablePdf } from '../services/pdfService'; // No longer used
+import { usePdfGenerator } from '../hooks/usePdfGenerator';
+import { LatexRenderer } from './LatexRenderer';
 
 // Utility function to generate AI summary content
 export const generateAiSummaryContent = async (
@@ -180,8 +179,7 @@ export const Report: React.FC<ReportProps> = ({
     allSubUnitsCount, selectedSubUnitsCount, isBulkDownloadMode, analysisConfig, classificationData,
     onSendEmail, isEmailing
 }) => {
-    const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
-
+    const { generatePdf, isGenerating: isDownloadingPdf } = usePdfGenerator();
     const reportRef = useRef<HTMLDivElement>(null);
     
     // Helper to get sort index from classification data
@@ -526,7 +524,12 @@ export const Report: React.FC<ReportProps> = ({
         let currentItemCount = 0;
 
         allChunks.forEach(chunk => {
-            if (currentPage.length > 0 && currentItemCount + chunk.items.length > 14) {
+            const hasDifferentUnit = currentPage.some(c => c.smallUnit !== chunk.smallUnit || c.largeUnit !== chunk.largeUnit);
+            const willHaveDifferentUnit = currentPage.length > 0 && (hasDifferentUnit || currentPage[0].smallUnit !== chunk.smallUnit);
+            
+            const maxItems = willHaveDifferentUnit ? 12 : 14;
+
+            if (currentPage.length > 0 && currentItemCount + chunk.items.length > maxItems) {
                 pages.push(currentPage);
                 currentPage = [];
                 currentItemCount = 0;
@@ -543,141 +546,7 @@ export const Report: React.FC<ReportProps> = ({
 
     const handleDownloadPdf = async () => {
         if (!reportRef.current) return;
-        setIsDownloadingPdf(true);
-
-        const reportElement = reportRef.current;
-        
-        // Store original inline styles and classes of the report element before modification
-        const originalCssText = reportElement.style.cssText;
-        const originalClassList = Array.from(reportElement.classList);
-
-        // Inject temporary CSS to freeze animations, shadows, and apply specific capture layout
-        const style = document.createElement('style');
-        style.innerHTML = `
-            /* Generic capture mode disabling transitions/animations/shadows */
-            .capturing * {
-                transition: none !important;
-                animation: none !important;
-                box-shadow: none !important;
-                text-shadow: none !important;
-            }
-            .capturing .h-full {
-                transition-property: none !important; /* Prevent 0% color bar */
-            }
-            /* Overall report container styles for consistent PDF rendering */
-            .capturing {
-                width: 900px !important;
-                min-width: 900px !important;
-                background-color: white !important;
-                line-height: 1.2 !important; /* Prevent text shifting */
-                -webkit-font-smoothing: antialiased !important;
-                -moz-osx-smoothing: grayscale !important;
-                position: relative !important; /* Ensure relative positioning for correct rendering context */
-                z-index: 9999 !important; /* Bring to front to ensure visibility for capture */
-            }
-            /* 텍스트 짤림 방지 */
-            .capturing .truncate {
-                overflow: visible !important;
-                white-space: normal !important;
-            }
-            /* 섹션 강제 페이지 나누기 방지 및 여백 */
-            .capturing [data-pdf-section] {
-                break-inside: avoid !important;
-                page-break-inside: avoid !important;
-                margin-bottom: 20px !important; /* Add consistent margin between sections */
-            }
-            /* LaTeX 수식 캡처 보정 */
-            .capturing .latex-math {
-                display: inline-block !important; /* 캡처 시 위치 이탈 방지 */
-                font-family: 'KaTeX_Main', 'Inter', sans-serif !important;
-            }
-        `;
-        document.head.appendChild(style);
-        reportElement.classList.add('capturing'); // Add capturing class to the report div
-
-        // 폰트 및 이미지 로딩 완벽 대기
-        if (document.fonts) await document.fonts.ready;
-        await new Promise(resolve => setTimeout(resolve, 500)); // 시간을 0.5초로 단축
-
-        try {
-            const pdf = new jsPDF('p', 'mm', 'a4');
-            const pageWidth = pdf.internal.pageSize.getWidth();
-            const margin = 12;
-            const contentWidth = pageWidth - (margin * 2);
-            
-            // 3. 머리글(Header) 캡처
-            const headerElement = reportElement.querySelector('[data-pdf-header]') as HTMLElement;
-            const headerCanvas = await html2canvas(headerElement, {
-                scale: 1.5, // 선명도 조정 (2 -> 1.5)
-                useCORS: true,
-                backgroundColor: '#ffffff',
-                foreignObjectRendering: false, // 검은 박스 방지 핵심 설정
-                logging: false, // 로깅 비활성화
-                fontEmbedCSS: true // 폰트 포함 설정 추가
-                // Removed windowWidth: 900, relying on CSS for overall width
-            });
-            const headerImgData = headerCanvas.toDataURL('image/jpeg', 0.7); // 품질 조정 (0.8 -> 0.7)
-            const headerHeight = (headerCanvas.height * contentWidth) / headerCanvas.width; // Corrected height calculation
-
-            // 4. 섹션별 순차 캡처 (요소가 잘리지 않도록 섹션 단위로 처리)
-            const sections = Array.from(reportElement.querySelectorAll('[data-pdf-section]')) as HTMLElement[];
-            let currentY = margin;
-
-            for (let i = 0; i < sections.length; i++) {
-                const section = sections[i];
-                const canvas = await html2canvas(section, {
-                    scale: 1.5, // 선명도 조정 (2 -> 1.5)
-                    useCORS: true,
-                    backgroundColor: '#ffffff',
-                    // Removed windowWidth: 900, relying on CSS for overall width
-                    foreignObjectRendering: false,
-                    logging: false, // 로깅 비활성화
-                    fontEmbedCSS: true // 폰트 포함 설정 추가
-                });
-
-                const imgData = canvas.toDataURL('image/jpeg', 0.7); // 품질 조정 (0.8 -> 0.7)
-                const imgHeight = (canvas.height * contentWidth) / canvas.width;
-
-                // 페이지 넘김 처리 (머리글 공간 확보)
-                if (currentY + imgHeight > pdf.internal.pageSize.getHeight() - (margin + headerHeight + 10)) { // ~285 total height, adjust for header and bottom margin
-                    pdf.addPage();
-                    currentY = margin;
-                }
-
-                // 모든 페이지 상단에 머리글 삽입
-                if (currentY === margin) {
-                    pdf.addImage(headerImgData, 'JPEG', margin, margin, contentWidth, headerHeight, undefined, 'MEDIUM');
-                    currentY += headerHeight + 6;
-
-                    // Footer: Indigo Line
-                    const pageHeight = pdf.internal.pageSize.getHeight();
-                    pdf.setDrawColor(79, 70, 229); // Indigo-600
-                    pdf.setLineWidth(0.5);
-                    pdf.line(margin, pageHeight - margin, pageWidth - margin, pageHeight - margin);
-                }
-
-                pdf.addImage(imgData, 'JPEG', margin, currentY, contentWidth, imgHeight, undefined, 'MEDIUM');
-                currentY += imgHeight + 4;
-
-                // Force page break after specific sections
-                if (section.id === 'section-page-1') {
-                    pdf.addPage();
-                    currentY = margin;
-                }
-            }
-
-            pdf.save(`${reportTitle}.pdf`);
-        } catch (error) {
-            console.error("PDF 생성 중 치명적 오류:", error);
-            alert("리포트 생성에 실패했습니다. 화면을 새로고침 후 다시 시도해 주세요.");
-        } finally {
-            // 5. 스타일 복구
-            reportElement.classList.remove('capturing'); // Remove temporary class
-            reportElement.classList.add(...originalClassList); // Restore original classes
-            reportElement.style.cssText = originalCssText; // Restore original inline styles
-            style.remove(); // Remove injected style
-            setIsDownloadingPdf(false);
-        }
+        await generatePdf(reportRef.current, { reportTitle });
     };
     
     return (
@@ -745,7 +614,7 @@ export const Report: React.FC<ReportProps> = ({
                             {/* 최근 10주 막대그래프 */}
                             <div className="space-y-4">
                                 <div className="flex justify-between text-sm font-bold text-slate-600">
-                                    <span>최근 10주 풀이</span>
+                                    <span>최근 10주간 풀이한 문제수</span>
                                 </div>
                                 <div className="flex items-end justify-between h-40 gap-2">
                                     {activityStats.weeks.map((w, i) => {
@@ -816,7 +685,7 @@ export const Report: React.FC<ReportProps> = ({
 
                 {/* [2페이지~] 세부 유형 분석 */}
                 {detailPages.map((page, pageIndex) => (
-                    <div key={`page-${pageIndex}`} data-pdf-section className="space-y-8 pt-6">
+                    <div key={`page-${pageIndex}`} data-pdf-section className="space-y-6">
                         {page.map((chunk, chunkIndexInPage) => (
                             <div key={`${chunk.largeUnit}-${chunk.smallUnit}-${chunk.chunkIndex}`} className="space-y-4">
                                 {/* Header */}

@@ -36,6 +36,7 @@ interface ExamReportViewerProps {
 
 export const ExamReportViewer: React.FC<ExamReportViewerProps> = ({ reportData, allQuestionDb, allStudentResponses, config }) => {
   const [selectedGrade, setSelectedGrade] = useState<string | null>(null);
+  const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
   const [selectedExamId, setSelectedExamId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'students' | 'questions'>('students');
   const [studentSortOrder, setStudentSortOrder] = useState<'rank' | 'name'>('rank');
@@ -120,69 +121,123 @@ export const ExamReportViewer: React.FC<ExamReportViewerProps> = ({ reportData, 
     return activeMap;
   }, [allStudentResponses, baseData.examToSubject]);
 
-  // 4. 시험지별 '대표 학년' 결정 (다수결 로직)
-  const examMajorityGrade = useMemo(() => {
+  // 4. 시험지별 메타데이터 (학년, 과목, 최신 응시일)
+  const examMetadata = useMemo(() => {
+    const meta = new Map<string, { subject: string, grade: string, latestDate: number }>();
+    
     const examToGradeCount = new Map<string, Map<string, number>>();
+    const examMaxDates = new Map<string, number>();
     const analyzableExams = new Set(reportData.map(r => r['시험 ID']));
 
     allStudentResponses.forEach(res => {
-      const examId = cleanStr(res['시험 ID'] || res['시험ID']);
-      const grade = cleanGrade(res['학년']);
-      
-      if (examId && analyzableExams.has(examId)) {
-        if (!examToGradeCount.has(examId)) examToGradeCount.set(examId, new Map());
-        const counts = examToGradeCount.get(examId)!;
-        counts.set(grade, (counts.get(grade) || 0) + 1);
-      }
+        const eId = cleanStr(res['시험 ID'] || res['시험ID']);
+        const grade = cleanGrade(res['학년']);
+        const tsValue = res['타임스탬프'];
+        const ts = tsValue instanceof Date ? tsValue.getTime() : new Date(String(tsValue)).getTime();
+
+        if (eId && analyzableExams.has(eId)) {
+            if (!examToGradeCount.has(eId)) examToGradeCount.set(eId, new Map());
+            const counts = examToGradeCount.get(eId)!;
+            counts.set(grade, (counts.get(grade) || 0) + 1);
+
+            examMaxDates.set(eId, Math.max(examMaxDates.get(eId) || 0, ts));
+        }
     });
 
-    const finalMapping = new Map<string, string>();
-    examToGradeCount.forEach((counts, examId) => {
-      const majorityGrade = Array.from(counts.entries()).reduce((a, b) => a[1] > b[1] ? a : b)[0];
-      finalMapping.set(examId, majorityGrade);
+    analyzableExams.forEach(eId => {
+        const subject = baseData.examToSubject.get(eId) || '미분류';
+        const counts = examToGradeCount.get(eId);
+        let majorityGrade = '미분류';
+        if (counts && counts.size > 0) {
+            majorityGrade = Array.from(counts.entries()).reduce((a, b) => a[1] > b[1] ? a : b)[0];
+        }
+        const latestDate = examMaxDates.get(eId) || 0;
+
+        meta.set(eId, { subject, grade: majorityGrade, latestDate });
     });
 
-    return finalMapping;
-  }, [allStudentResponses, reportData]);
+    return meta;
+  }, [allStudentResponses, reportData, baseData.examToSubject]);
 
-  // 5. 학년별 시험지 목록 구성
-  const gradesWithExams = useMemo(() => {
-    const map = new Map<string, string[]>();
-    examMajorityGrade.forEach((grade, examId) => {
-      if (!map.has(grade)) map.set(grade, []);
-      map.get(grade)!.push(examId);
-    });
+  // 5. 계층 구조 생성 (학년 -> 과목 -> 시험지 목록)
+  const hierarchy = useMemo(() => {
+      const tree = new Map<string, Map<string, { id: string, date: number }[]>>();
+      examMetadata.forEach((data, examId) => {
+          if (!tree.has(data.grade)) tree.set(data.grade, new Map());
+          const subjectMap = tree.get(data.grade)!;
+          if (!subjectMap.has(data.subject)) subjectMap.set(data.subject, []);
+          subjectMap.get(data.subject)!.push({ id: examId, date: data.latestDate });
+      });
 
-    return Array.from(map.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([grade, exams]) => ({ grade, exams: exams.sort() }));
-  }, [examMajorityGrade]);
+      // Sort exams by date DESC
+      tree.forEach(subjectMap => {
+          subjectMap.forEach(exams => {
+              exams.sort((a, b) => b.date - a.date);
+          });
+      });
 
-  const availableGrades = useMemo(() => gradesWithExams.map(g => g.grade), [gradesWithExams]);
+      return tree;
+  }, [examMetadata]);
 
-  // 학년/시험지 선택 자동화
+  const availableGrades = useMemo(() => Array.from(hierarchy.keys()).sort((a, b) => a.localeCompare(b)), [hierarchy]);
+  
+  const availableSubjects = useMemo(() => {
+      if (!selectedGrade || !hierarchy.has(selectedGrade)) return [];
+      return Array.from(hierarchy.get(selectedGrade)!.keys()).sort((a, b) => a.localeCompare(b));
+  }, [hierarchy, selectedGrade]);
+
+  const availableExams = useMemo(() => {
+      if (!selectedGrade || !selectedSubject || !hierarchy.has(selectedGrade)) return [];
+      const subjectMap = hierarchy.get(selectedGrade)!;
+      if (!subjectMap.has(selectedSubject)) return [];
+      return subjectMap.get(selectedSubject)!.map(e => e.id);
+  }, [hierarchy, selectedGrade, selectedSubject]);
+
+  // 학년/과목/시험지 선택 자동화
   useEffect(() => {
-    if (availableGrades.length > 0 && !selectedGrade) {
+    if (availableGrades.length > 0 && (!selectedGrade || !availableGrades.includes(selectedGrade))) {
       setSelectedGrade(availableGrades[0]);
     }
   }, [availableGrades, selectedGrade]);
 
   useEffect(() => {
-    const currentGradeExams = gradesWithExams.find(g => g.grade === selectedGrade)?.exams || [];
-    if (currentGradeExams.length > 0) {
-      if (!selectedExamId || !currentGradeExams.includes(selectedExamId)) {
-        setSelectedExamId(currentGradeExams[0]);
-      }
-    } else {
+    if (availableSubjects.length > 0 && (!selectedSubject || !availableSubjects.includes(selectedSubject))) {
+      setSelectedSubject(availableSubjects[0]);
+    } else if (availableSubjects.length === 0) {
+      setSelectedSubject(null);
+    }
+  }, [availableSubjects, selectedSubject]);
+
+  useEffect(() => {
+    if (availableExams.length > 0 && (!selectedExamId || !availableExams.includes(selectedExamId))) {
+      setSelectedExamId(availableExams[0]);
+    } else if (availableExams.length === 0) {
       setSelectedExamId(null);
     }
-  }, [selectedGrade, gradesWithExams, selectedExamId]);
+  }, [availableExams, selectedExamId]);
 
   // 분석 데이터 계산
   useEffect(() => {
     if (selectedExamId && allQuestionDb && allStudentResponses && config) {
         try {
-            const analysis = calculateExamScores(allQuestionDb, allStudentResponses, selectedExamId, config);
+            const cleanedExamId = cleanStr(selectedExamId);
+            
+            const questionsForExam = allQuestionDb.filter(q => {
+                const id = cleanStr(q['시험 ID/교재명'] || q['시험 ID'] || q['시험ID']);
+                return id === cleanedExamId;
+            });
+            
+            const responsesForExam = allStudentResponses.filter(r => {
+                const id = cleanStr(r['시험 ID'] || r['시험ID']);
+                return id === cleanedExamId;
+            });
+            
+            if (questionsForExam.length === 0) {
+                setCurrentExamAnalysis(null);
+                return;
+            }
+
+            const analysis = calculateExamScores(questionsForExam, responsesForExam, selectedExamId, config);
             setCurrentExamAnalysis(analysis);
         } catch (e: unknown) {
             console.error("Failed to calculate exam analysis:", String(e));
@@ -278,7 +333,7 @@ export const ExamReportViewer: React.FC<ExamReportViewerProps> = ({ reportData, 
         </div>
 
         {/* 학년 선택 및 시험지 필터 섹션 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
             <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-3 px-1 flex items-center gap-2">
               <GraduationCap className="w-3 h-3" /> Grade Selection
@@ -301,6 +356,30 @@ export const ExamReportViewer: React.FC<ExamReportViewerProps> = ({ reportData, 
           </div>
 
           <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-3 px-1 flex items-center gap-2">
+              <Layers className="w-3 h-3" /> Subject Selection
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {availableSubjects.map(subject => (
+                <button
+                  key={subject}
+                  onClick={() => setSelectedSubject(subject)}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all border ${
+                    selectedSubject === subject 
+                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' 
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'
+                  }`}
+                >
+                  {subject}
+                </button>
+              ))}
+              {availableSubjects.length === 0 && (
+                <span className="text-sm text-gray-400 font-medium">학년을 먼저 선택하세요</span>
+              )}
+            </div>
+          </div>
+
+          <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
             <label htmlFor="exam-id-select" className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-3 px-1 flex items-center gap-2">
               <Filter className="w-3 h-3" /> Filtered Exam List
             </label>
@@ -308,15 +387,15 @@ export const ExamReportViewer: React.FC<ExamReportViewerProps> = ({ reportData, 
               id="exam-id-select"
               value={selectedExamId || ''}
               onChange={(e) => setSelectedExamId(e.target.value)}
-              disabled={!selectedGrade || (gradesWithExams.find(g => g.grade === selectedGrade)?.exams.length === 0)}
+              disabled={!selectedGrade || !selectedSubject || availableExams.length === 0}
               className="w-full p-2.5 border border-gray-200 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500 bg-white outline-none transition font-bold text-gray-700 disabled:bg-gray-100 disabled:text-gray-400"
             >
-              {selectedGrade ? (
-                gradesWithExams.find(g => g.grade === selectedGrade)?.exams.map(id => (
+              {selectedGrade && selectedSubject ? (
+                availableExams.map(id => (
                   <option key={id} value={id}>{id}</option>
                 ))
               ) : (
-                <option value="">학년을 먼저 선택하세요</option>
+                <option value="">과목을 먼저 선택하세요</option>
               )}
             </select>
           </div>
