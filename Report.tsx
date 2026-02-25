@@ -17,7 +17,8 @@ export const generateAiSummaryContent = async (
   config: AnalysisConfig // To check generateAiReport
 ): Promise<string> => {
     if (!config.generateAiReport) return ''; // Skip if AI report is disabled
-    if (!process.env.API_KEY) {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "AIzaSyAAisU-tTNmO5iSHEAvzn_Dzkdgwl9oYKE";
+    if (!apiKey) {
         console.error("API key is not set for AI summary generation.");
         return "AI API Key가 설정되지 않아 AI 총평을 생성할 수 없습니다.";
     }
@@ -85,7 +86,8 @@ export const generateAiSummaryContent = async (
         let delay = 2000;
 
         const fetchSummary = async (): Promise<string> => {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "AIzaSyAAisU-tTNmO5iSHEAvzn_Dzkdgwl9oYKE";
+            const ai = new GoogleGenAI({ apiKey });
             try {
                 const response = await ai.models.generateContent({
                     model: 'gemini-3-flash-preview',

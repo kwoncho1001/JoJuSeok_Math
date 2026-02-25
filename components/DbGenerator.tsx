@@ -132,10 +132,11 @@ export const DbGenerator: React.FC<DbGeneratorProps> = ({ syncedCsvData, registe
         setGeneratedData(null);
 
         try {
-            if (!process.env.API_KEY) throw new Error("API key가 설정되지 않았습니다.");
+            const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "AIzaSyAAisU-tTNmO5iSHEAvzn_Dzkdgwl9oYKE";
+            if (!apiKey) throw new Error("API key가 설정되지 않았습니다.");
             const pdfBase64 = await fileToBase64(pdfFile);
             const fullPrompt = `${DB_GENERATOR_PROMPT}\n${JSON.stringify(csvData, null, 2)}`;
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const ai = new GoogleGenAI({ apiKey });
             
             const response = await ai.models.generateContent({
                 model: 'gemini-3-pro-preview',
@@ -252,7 +253,7 @@ export const DbGenerator: React.FC<DbGeneratorProps> = ({ syncedCsvData, registe
         <div className="space-y-8">
             <div className="text-center">
                 <h2 className="text-3xl font-extrabold text-gray-800">AI 기반 Question DB 생성기</h2>
-                <p className="text-gray-500 mt-2 max-w-2xl mx-auto">PDF 문제지와 목차(CSV)를 업로드하면, AI가 자동으로 분석하여 Question DB를 생성합니다.</p>
+                <p className="text-gray-500 mt-2 max-w-2xl mx-auto">PDF 문제지와 목차 분류표를 업로드하면, AI가 자동으로 분석하여 Question DB를 생성합니다.</p>
             </div>
 
             {/* Currently Registered Exam Sheets Section */}
