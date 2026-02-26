@@ -132,8 +132,8 @@ export const DbGenerator: React.FC<DbGeneratorProps> = ({ syncedCsvData, registe
         setGeneratedData(null);
 
         try {
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "AIzaSyAAisU-tTNmO5iSHEAvzn_Dzkdgwl9oYKE";
-            if (!apiKey) throw new Error("API key가 설정되지 않았습니다.");
+            const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+            if (!apiKey) throw new Error("API Key가 설정되지 않았습니다. Cloudflare 설정을 확인하세요.");
             const pdfBase64 = await fileToBase64(pdfFile);
             const fullPrompt = `${DB_GENERATOR_PROMPT}\n${JSON.stringify(csvData, null, 2)}`;
             const ai = new GoogleGenAI({ apiKey });
